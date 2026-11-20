@@ -45,6 +45,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import ccswitchLogo from "@/assets/icons/logo.svg";
+import { SshHosts } from "./SshHosts";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
@@ -95,6 +96,7 @@ export function Sidebar(props: SidebarProps) {
         {t("nav.skipToContent")}
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
+      <SshHosts collapsed={collapsed} onExpand={toggle} />
       {inSettings ? (
         <SettingsDirectory {...props} collapsed={collapsed} />
       ) : (
@@ -220,14 +222,16 @@ function MainDirectory({
   const { moneyShort } = useMoneyFormat();
   const { data: settings } = useSettingsQuery();
   const { hasUpdate } = useUpdate();
+  const todayItems = resolveSidebarToday(settings?.usageDisplay);
   const {
     appStatus,
     todayCost,
     todayTokens,
     todayRequests,
     todayHitRate,
+    todayUsagePartial,
     authNeedsAttention,
-  } = useSidebarStatus();
+  } = useSidebarStatus(todayItems.length > 0);
   // 顺序跟应用页拖出来的一致
   const apps = orderAppIds(settings?.appOrder).filter(
     (app) => visibleApps[app],
@@ -256,7 +260,7 @@ function MainDirectory({
           : null;
     }
   };
-  const todayValues = resolveSidebarToday(settings?.usageDisplay)
+  const todayValues = todayItems
     .map(todayValue)
     .filter((part): part is string => part != null);
   const todayText =
@@ -289,6 +293,7 @@ function MainDirectory({
       icon: ChartColumn,
       trailing: todayTrailing,
       trailingLabel: todayText,
+      alert: todayUsagePartial ? t("ssh.partialUsage") : undefined,
     },
   ];
 

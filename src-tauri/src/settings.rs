@@ -828,7 +828,12 @@ impl AppSettings {
     }
 
     fn settings_path() -> Option<PathBuf> {
+        // The SSH backend keeps its own settings with its managed database.
+        #[cfg(not(feature = "desktop"))]
+        return Some(crate::config::get_app_config_dir().join("settings.json"));
+
         // settings.json 保留用于旧版本迁移和无数据库场景
+        #[cfg(feature = "desktop")]
         Some(
             crate::config::get_home_dir()
                 .join(".cc-switch")
@@ -1330,7 +1335,32 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Copilot
         | AppType::WorkBuddy => return None,
     };
-    dir.as_deref().map(resolve_override_path)
+    let configured = dir.as_deref().map(resolve_override_path);
+    #[cfg(not(feature = "desktop"))]
+    let configured = configured.or_else(|| {
+        let (variable, suffix) = match app {
+            AppType::Claude => ("CLAUDE_CONFIG_DIR", ""),
+            AppType::Codex => ("CODEX_HOME", ""),
+            AppType::Gemini => ("GEMINI_CLI_HOME", ".gemini"),
+            AppType::GrokBuild => ("GROK_HOME", ""),
+            AppType::OpenCode => ("XDG_CONFIG_HOME", "opencode"),
+            AppType::OpenClaw => ("OPENCLAW_STATE_DIR", ""),
+            AppType::Hermes => ("HERMES_HOME", ""),
+            AppType::Pi => ("PI_CODING_AGENT_DIR", ""),
+            _ => return None,
+        };
+        let value = std::env::var(variable).ok()?;
+        if value.trim().is_empty() {
+            return None;
+        }
+        let path = resolve_override_path(&value);
+        Some(if suffix.is_empty() {
+            path
+        } else {
+            path.join(suffix)
+        })
+    });
+    configured
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {

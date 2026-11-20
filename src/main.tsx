@@ -13,8 +13,9 @@ import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
 import { settingsApi } from "@/lib/api";
 import { Toaster } from "@/components/ui/sonner";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@/lib/machineEvents";
+import { invoke, remoteConfiguration } from "@/lib/machineIpc";
+import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
 import { message } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
 import { FrontendErrorBoundary } from "./components/FrontendErrorBoundary";
@@ -33,6 +34,12 @@ import { disableContextMenu } from "@/lib/disableContextMenu";
 
 installGlobalErrorHandlers();
 disableContextMenu();
+if (remoteConfiguration) {
+  window.__ccSwitchProviderDrafts = {
+    dirty: hasUnsavedChanges,
+    discard: discardUnsavedChanges,
+  };
+}
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -98,9 +105,9 @@ async function bootstrap() {
 
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
-    const initError = (await invoke(
-      "get_init_error",
-    )) as ConfigLoadErrorPayload | null;
+    const initError = remoteConfiguration
+      ? null
+      : ((await invoke("get_init_error")) as ConfigLoadErrorPayload | null);
     if (initError && initError.kind === "db_version_too_new") {
       // 数据库版本过新：渲染应用内「升级应用」恢复界面，不进入正常 App
       ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -125,14 +132,16 @@ async function bootstrap() {
     reportFrontendError("get_init_error", e);
   }
 
-  initializeWindowActivity();
+  if (!remoteConfiguration) initializeWindowActivity();
   initializeInputModality();
 
   // 首屏语言来自 localStorage 缓存；拿到后端保存的语言后再校正一次。
   // 与 useSettingsQuery 共用 ["settings"] 缓存，进设置页不会重复拉取。
   void queryClient
     .fetchQuery({ queryKey: ["settings"], queryFn: () => settingsApi.get() })
-    .then((settings) => syncLanguageFromSettings(settings.language))
+    .then((settings) => {
+      if (!remoteConfiguration) syncLanguageFromSettings(settings.language);
+    })
     .catch((error) => reportFrontendError("startup_language_sync", error));
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -156,6 +165,7 @@ async function bootstrap() {
     </React.StrictMode>,
   );
 
+  if (remoteConfiguration) return;
   void syncModelsDevPricingOnStartup()
     .then((result) => {
       if (!result.skipped) {

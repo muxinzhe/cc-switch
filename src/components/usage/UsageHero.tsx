@@ -6,6 +6,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
 import {
+  aggregateSummaries,
   fmtInt,
   formatHitRatePercent,
   formatTokensCompact,
@@ -33,47 +34,6 @@ interface UsageHeroProps {
   /** 选中的指标就是下方趋势图 / 热力图画的指标 */
   metric: UsageMetric;
   onMetricChange: (metric: UsageMetric) => void;
-}
-
-/**
- * Combine per-app summaries into a single rolled-up summary.
- *
- * The backend's per-app rows already use fresh-input semantics (cache-inclusive
- * providers have been normalized in SQL), so plain addition is correct here.
- * `cacheHitRate` and `successRate` must be re-derived from the summed counts
- * rather than averaged across rows.
- */
-export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
-  let totalRequests = 0;
-  let successCount = 0;
-  let totalCostNum = 0;
-  let input = 0;
-  let output = 0;
-  let cacheCreation = 0;
-  let cacheRead = 0;
-
-  for (const s of items) {
-    totalRequests += s.totalRequests;
-    successCount += Math.round((s.totalRequests * s.successRate) / 100);
-    totalCostNum += parseFiniteNumber(s.totalCost) ?? 0;
-    input += s.totalInputTokens;
-    output += s.totalOutputTokens;
-    cacheCreation += s.totalCacheCreationTokens;
-    cacheRead += s.totalCacheReadTokens;
-  }
-
-  const cacheableInput = input + cacheCreation + cacheRead;
-  return {
-    totalRequests,
-    totalCost: totalCostNum.toFixed(6),
-    totalInputTokens: input,
-    totalOutputTokens: output,
-    totalCacheCreationTokens: cacheCreation,
-    totalCacheReadTokens: cacheRead,
-    successRate: totalRequests > 0 ? (successCount / totalRequests) * 100 : 0,
-    realTotalTokens: input + output + cacheCreation + cacheRead,
-    cacheHitRate: cacheableInput > 0 ? cacheRead / cacheableInput : 0,
-  };
 }
 
 function pickSummary(

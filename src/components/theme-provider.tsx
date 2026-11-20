@@ -5,7 +5,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 
 type Theme = "light" | "dark" | "system";
 

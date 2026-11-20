@@ -1,4 +1,26 @@
 {
+  "ssh": {
+    "title": "SSH-Hosts",
+    "local": "Dieser Computer",
+    "description": "Wähle einen Host aus deiner lokalen SSH-Konfiguration oder gib ein Ziel ein.",
+    "destination": "SSH-Ziel",
+    "placeholder": "SSH-Alias oder Benutzer@Host",
+    "noAliases": "Keine Aliasse in ~/.ssh/config gefunden.",
+    "allMachines": "Alle Rechner",
+    "machineFilter": "Rechner",
+    "addHost": "Host hinzufügen",
+    "editHost": "Host bearbeiten",
+    "removeHost": "Host entfernen",
+    "fromConfig": "Alias aus SSH-Konfiguration",
+    "hostName": "Anzeigename",
+    "port": "Port",
+    "identityFile": "Schlüsseldatei",
+    "enableBackend": "Backend aktivieren",
+    "partialUsage": "Die Summe enthält die bereits verfügbaren Daten.",
+    "readOnly": "Schreibgeschützt",
+    "noRemoteProfiles": "Keine Profile für diese App gefunden.",
+    "liveProfile": "Aktuelle native Konfiguration"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Der All-in-One-Assistent für Claude Code, Codex & Gemini CLI"

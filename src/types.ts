@@ -597,6 +597,8 @@ export interface SessionContentSearchResult {
 }
 
 export interface SessionMeta {
+  machineId?: string;
+  machineName?: string;
   providerId: string;
   sessionId: string;
   title?: string;

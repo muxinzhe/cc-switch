@@ -19,16 +19,39 @@ where
         .map_err(|error| AppError::Message(format!("用量查询任务失败: {error}")))?
 }
 
+async fn run_scoped_usage_query<T, F>(
+    state: &State<'_, AppState>,
+    snapshots: &State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
+    query: F,
+) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::database::Database) -> Result<T, AppError> + Send + 'static,
+{
+    if let Some(id) = snapshot_id {
+        let db = snapshots.get(&id).ok_or_else(|| {
+            AppError::Message("The usage snapshot expired. Refresh usage to load it again.".into())
+        })?;
+        return tauri::async_runtime::spawn_blocking(move || query(&db))
+            .await
+            .map_err(|error| AppError::Message(error.to_string()))?;
+    }
+    run_db_query(state, query).await
+}
+
 #[tauri::command]
 pub async fn get_usage_summary(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<UsageSummary, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_usage_summary(
             start_date,
             end_date,
@@ -57,12 +80,14 @@ pub async fn get_session_usage_summary(
 #[tauri::command]
 pub async fn get_usage_summary_by_app(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_usage_summary_by_app(
             start_date,
             end_date,
@@ -76,13 +101,15 @@ pub async fn get_usage_summary_by_app(
 #[tauri::command]
 pub async fn get_usage_trends(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_daily_trends(
             start_date,
             end_date,
@@ -98,11 +125,13 @@ pub async fn get_usage_trends(
 #[tauri::command]
 pub async fn get_usage_first_date(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Option<String>, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_first_usage_date(
             app_type.as_deref(),
             provider_name.as_deref(),
@@ -115,13 +144,15 @@ pub async fn get_usage_first_date(
 #[tauri::command]
 pub async fn get_provider_stats(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_provider_stats(
             start_date,
             end_date,
@@ -136,13 +167,15 @@ pub async fn get_provider_stats(
 #[tauri::command]
 pub async fn get_model_stats(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_model_stats(
             start_date,
             end_date,
@@ -157,11 +190,13 @@ pub async fn get_model_stats(
 #[tauri::command]
 pub async fn get_request_logs(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     filters: LogFilters,
     page: u32,
     page_size: u32,
 ) -> Result<PaginatedLogs, AppError> {
-    run_db_query(&state, move |db| {
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
         db.get_request_logs(&filters, page, page_size)
     })
     .await
@@ -170,9 +205,14 @@ pub async fn get_request_logs(
 #[tauri::command]
 pub async fn get_request_detail(
     state: State<'_, AppState>,
+    snapshots: State<'_, crate::ssh::usage::Snapshots>,
+    snapshot_id: Option<String>,
     request_id: String,
 ) -> Result<Option<RequestLogDetail>, AppError> {
-    run_db_query(&state, move |db| db.get_request_detail(&request_id)).await
+    run_scoped_usage_query(&state, &snapshots, snapshot_id, move |db| {
+        db.get_request_detail(&request_id)
+    })
+    .await
 }
 
 #[tauri::command]

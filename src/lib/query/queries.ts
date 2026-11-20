@@ -305,10 +305,11 @@ export const useUsageQuery = (
   };
 };
 
-export const useSessionsQuery = () => {
+export const useSessionsQuery = (enabled = true) => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],
     queryFn: async () => sessionsApi.list(),
+    enabled,
     staleTime: 30 * 1000,
   });
 };

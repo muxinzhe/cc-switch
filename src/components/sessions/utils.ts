@@ -75,7 +75,9 @@ export const nativeDeleteHintKey = (
     : NATIVE_DELETE_HINT_KEYS[session.providerId];
 
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && !nativeDeleteHintKey(session);
+  !session.machineId &&
+  Boolean(session.sourcePath) &&
+  !nativeDeleteHintKey(session);
 
 export interface SessionProjectGroup {
   key: string;
@@ -83,6 +85,7 @@ export interface SessionProjectGroup {
   label: string;
   sessions: SessionMeta[];
   latest: number;
+  machineName?: string;
 }
 
 export type SessionTimeBucket = "today" | "yesterday" | "thisWeek" | "earlier";
@@ -93,7 +96,7 @@ export interface SessionTimeGroup {
 }
 
 export const getSessionKey = (session: SessionMeta) =>
-  `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
+  `${session.machineId ? `ssh:${session.machineId}:` : ""}${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
 
 export const getSessionTime = (session: SessionMeta) =>
   session.lastActiveAt ?? session.createdAt ?? 0;
@@ -231,11 +234,14 @@ export const groupSessionsByProject = (
     const rawDir = session.projectDir?.trim() || null;
     const codexChatsRoot = rawDir?.match(CODEX_CHAT_DIR_RE)?.[1] ?? null;
     const projectDir = codexChatsRoot ?? rawDir;
-    const key = codexChatsRoot
+    const projectKey = codexChatsRoot
       ? CODEX_CHATS_KEY_PREFIX + getProjectDirKey(codexChatsRoot)
       : projectDir
         ? getProjectDirKey(projectDir)
         : UNKNOWN_PROJECT_DIR_KEY;
+    const key = session.machineId
+      ? `ssh:${session.machineId}:${projectKey}`
+      : projectKey;
     let group = groups.get(key);
     if (!group) {
       group = {
@@ -248,6 +254,7 @@ export const groupSessionsByProject = (
             : unknownDirectoryLabel,
         sessions: [],
         latest: 0,
+        ...(session.machineName ? { machineName: session.machineName } : {}),
       };
       groups.set(key, group);
     }
@@ -256,9 +263,10 @@ export const groupSessionsByProject = (
   });
 
   return Array.from(groups.values()).sort((a, b) => {
-    if (a.projectDir === null) return 1;
-    if (b.projectDir === null) return -1;
-    return b.latest - a.latest;
+    return (
+      Number(a.projectDir === null) - Number(b.projectDir === null) ||
+      b.latest - a.latest
+    );
   });
 };
 

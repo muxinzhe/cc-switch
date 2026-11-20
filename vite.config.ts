@@ -20,6 +20,10 @@ export default defineConfig(({ command }) => ({
       // 托盘面板是单独的入口，不加载主界面
       input: {
         main: path.resolve(__dirname, "src/index.html"),
+        "provider-machine": path.resolve(
+          __dirname,
+          "src/provider-machine.html",
+        ),
         "tray-panel": path.resolve(__dirname, "src/tray-panel.html"),
       },
     },

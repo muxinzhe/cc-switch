@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -82,6 +82,20 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { MachinePicker } from "@/ssh/MachineScope";
+import {
+  ProviderMachineFrame,
+  providerFrameDrafts,
+  navigateFromProviderMachine,
+} from "@/ssh/ProviderMachineFrame";
+import { remoteConfiguration } from "@/lib/machineIpc";
+import { useSshHosts } from "@/ssh/api";
+import { SyncProviderButton } from "@/ssh/SyncProviderButton";
+import {
+  RemoteConfigButton,
+  RemoteConfigEditor,
+  type RemoteConfigSelection,
+} from "@/ssh/RemoteConfigEditor";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { AutoUpdatePrompt } from "@/components/AutoUpdatePrompt";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
@@ -229,9 +243,24 @@ function App() {
   const queryClient = useQueryClient();
   const { hasUpdate } = useUpdate();
 
-  const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [activeApp, setActiveApp] = useState<AppId>(
+    () => remoteConfiguration?.app ?? getInitialApp(),
+  );
+  const { data: sshHosts } = useSshHosts(!remoteConfiguration);
+  const configurationHosts = (sshHosts ?? []).filter((host) => host.enabled);
+  const [configurationHostId, setConfigurationHostId] = useState("local");
+  const [viewMachineFilter, setViewMachineFilter] = useState<string>();
+  const [configurationFile, setConfigurationFile] =
+    useState<RemoteConfigSelection>();
+  const configurationHost = configurationHosts.find(
+    ({ id }) => id === configurationHostId,
+  );
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
-  const [currentView, setCurrentView] = useState<View>(readStoredView);
+  const [currentView, setCurrentView] = useState<View>(() =>
+    remoteConfiguration ? "providers" : readStoredView(),
+  );
+  const showConfigurationHost =
+    !remoteConfiguration && currentView === "providers";
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("general");
   const [appConfigScrollTarget, setAppConfigScrollTarget] = useState<AppId>();
@@ -654,7 +683,7 @@ function App() {
 
   useEffect(() => {
     // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
-    if (!settingsData) return;
+    if (remoteConfiguration || !settingsData) return;
 
     const syncWindowDecorations = async () => {
       try {
@@ -668,7 +697,7 @@ function App() {
   }, [useAppWindowControls, settingsData]);
 
   useEffect(() => {
-    if (!isLinux() || !useAppWindowControls) return;
+    if (remoteConfiguration || !isLinux() || !useAppWindowControls) return;
 
     const win = getCurrentWindow();
     let active = true;
@@ -806,6 +835,7 @@ function App() {
   }, [useAppWindowControls]);
 
   useEffect(() => {
+    if (remoteConfiguration) return;
     const checkEnvOnStartup = async () => {
       try {
         const allConflicts = await checkAllEnvConflicts();
@@ -830,6 +860,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (remoteConfiguration) return;
     const checkMigration = async () => {
       try {
         const migrated = await invoke<boolean>("get_migration_result");
@@ -848,6 +879,7 @@ function App() {
   }, [t]);
 
   useEffect(() => {
+    if (remoteConfiguration) return;
     const checkSkillsMigration = async () => {
       try {
         const result = await invoke<{ count: number; error?: string } | null>(
@@ -939,7 +971,7 @@ function App() {
   // 整页编辑器里有未保存的修改：先确认，确认放弃后再执行这次导航
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   const confirmLeave = (proceed: () => void) => {
-    if (!hasUnsavedChanges()) return false;
+    if (!hasUnsavedChanges() && !providerFrameDrafts()?.dirty()) return false;
     setPendingLeave(() => proceed);
     return true;
   };
@@ -982,6 +1014,13 @@ function App() {
     if (currentViewRef.current === page) return;
     if (confirmLeave(() => openPage(page))) return;
     closeProviderPanels();
+    if (
+      remoteConfiguration &&
+      (page === "usage" || page === "sessions" || page === "apps")
+    ) {
+      navigateFromProviderMachine(page);
+      return;
+    }
     if (page === "prompts" && currentViewRef.current !== "prompts") {
       // 提示词页默认选中侧栏里最后选的那个应用
       setPromptsApp(
@@ -1021,6 +1060,8 @@ function App() {
       return;
     }
     if (page === "usage") setUsageAppFilter("all");
+    if (page === "usage" || page === "sessions")
+      setViewMachineFilter(undefined);
     openPage(page);
   };
 
@@ -1573,6 +1614,13 @@ function App() {
                 </Button>
               </HoverTip>
             )}
+          {remoteConfiguration && currentView === "providers" && (
+            <SyncProviderButton
+              app={activeApp}
+              current={providers}
+              disabled={isLoading}
+            />
+          )}
           {currentView === "providers" && (
             <Button
               variant="solid"
@@ -1804,6 +1852,7 @@ function App() {
       case "usage":
         return (
           <UsagePage
+            initialMachine={viewMachineFilter}
             initialAppType={usageAppFilter}
             onOpenRoutingSettings={() => openSettings("routing")}
           />
@@ -1877,6 +1926,7 @@ function App() {
             key={sharedFeatureApp}
             appId={sharedFeatureApp}
             fromApp={activeApp}
+            initialMachine={viewMachineFilter}
             onOpenTerminalSettings={() => openSettings("general")}
           />
         );
@@ -1907,22 +1957,24 @@ function App() {
       value={useAppWindowControls ? <WindowControls /> : null}
     >
       <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
-        <Sidebar
-          activeApp={activeApp}
-          view={currentView}
-          visibleApps={visibleApps}
-          settingsSection={settingsSection}
-          onSelectApp={selectApp}
-          onSelectPage={openPageFromNav}
-          onSelectSettingsSection={(section) => {
-            setAppConfigScrollTarget(undefined);
-            setSettingsSection(section);
-          }}
-          onExitSettings={exitSettings}
-          appsUpdateAvailable={
-            checkToolUpdatesOnStartup && toolUpdatesAvailable
-          }
-        />
+        {!remoteConfiguration && (
+          <Sidebar
+            activeApp={activeApp}
+            view={currentView}
+            visibleApps={visibleApps}
+            settingsSection={settingsSection}
+            onSelectApp={selectApp}
+            onSelectPage={openPageFromNav}
+            onSelectSettingsSection={(section) => {
+              setAppConfigScrollTarget(undefined);
+              setSettingsSection(section);
+            }}
+            onExitSettings={exitSettings}
+            appsUpdateAvailable={
+              checkToolUpdatesOnStartup && toolUpdatesAvailable
+            }
+          />
+        )}
         <main
           ref={mainScrollRef}
           id="content-area"
@@ -1962,9 +2014,46 @@ function App() {
             }
             className="flex min-h-0 flex-1 flex-col"
           >
-            <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>
+            {showConfigurationHost && configurationHosts.length > 0 && (
+              <div className="flex shrink-0 items-center gap-2 px-6 pt-2">
+                <MachinePicker
+                  hosts={configurationHosts}
+                  scope={configurationHost?.id ?? "local"}
+                  includeAll={false}
+                  select={(id) => {
+                    const select = () => setConfigurationHostId(id);
+                    if (!confirmLeave(select)) select();
+                  }}
+                />
+                {configurationHost && (
+                  <RemoteConfigButton
+                    app={activeApp}
+                    host={configurationHost}
+                    onSelect={(host, file) => {
+                      const show = () =>
+                        setConfigurationFile({ host, app: activeApp, file });
+                      if (!confirmLeave(show)) show();
+                    }}
+                  />
+                )}
+              </div>
+            )}
+            {showConfigurationHost && configurationHost ? (
+              <ProviderMachineFrame
+                host={configurationHost}
+                app={activeApp}
+                onNavigate={(page) => {
+                  setViewMachineFilter(configurationHost.id);
+                  if (page === "usage")
+                    setUsageAppFilter(activeUsageApp ?? "all");
+                  openPage(page);
+                }}
+              />
+            ) : (
+              <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>
+            )}
           </div>
-          <AutoUpdatePrompt />
+          {!remoteConfiguration && <AutoUpdatePrompt />}
         </main>
       </div>
 
@@ -2023,6 +2112,13 @@ function App() {
         onCancel={() => setConfirmAction(null)}
       />
 
+      {configurationFile && (
+        <RemoteConfigEditor
+          selection={configurationFile}
+          onClose={() => setConfigurationFile(undefined)}
+        />
+      )}
+
       <ConfirmDialog
         isOpen={pendingLeave !== null}
         title={t("common.unsavedLeaveTitle")}
@@ -2034,6 +2130,7 @@ function App() {
           const proceed = pendingLeave;
           setPendingLeave(null);
           discardUnsavedChanges();
+          providerFrameDrafts()?.discard();
           proceed?.();
         }}
         onCancel={() => setPendingLeave(null)}
@@ -2061,10 +2158,14 @@ function App() {
         onCancel={() => setLaunchDashboardOpen(false)}
       />
 
-      <DeepLinkImportDialog />
-      <FirstRunNoticeDialog />
-      <NewLayoutDialog />
-      <WhatsNewNotice />
+      {!remoteConfiguration && (
+        <>
+          <DeepLinkImportDialog />
+          <FirstRunNoticeDialog />
+          <NewLayoutDialog />
+          <WhatsNewNotice />
+        </>
+      )}
     </WindowControlsContext.Provider>
   );
 }

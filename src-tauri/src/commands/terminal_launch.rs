@@ -174,6 +174,61 @@ pub async fn open_provider_terminal(
     #[allow(non_snake_case)] skipPermissions: Option<bool>,
     #[allow(non_snake_case)] extraArgs: Option<String>,
 ) -> Result<bool, String> {
+    let (launch, launch_cwd) = prepare_provider_launch(
+        state,
+        agy_accounts,
+        copilot_auth,
+        app,
+        providerId,
+        cwd,
+        skipPermissions,
+        extraArgs,
+    )
+    .await?;
+    launch_provider_terminal(&launch, launch_cwd.as_deref())
+        .map_err(|e| format!("启动终端失败: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(not(feature = "desktop"))]
+#[allow(non_snake_case, clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn prepare_provider_terminal(
+    state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    copilot_auth: State<'_, crate::commands::CopilotAuthState>,
+    app: String,
+    providerId: String,
+    cwd: Option<String>,
+    skipPermissions: Option<bool>,
+    extraArgs: Option<String>,
+) -> Result<PathBuf, String> {
+    let (launch, cwd) = prepare_provider_launch(
+        state,
+        agy_accounts,
+        copilot_auth,
+        app,
+        providerId,
+        cwd,
+        skipPermissions,
+        extraArgs,
+    )
+    .await?;
+    write_unix_launcher(&launch, cwd.as_deref()).map(|(script, _)| script)
+}
+
+#[allow(non_snake_case, clippy::too_many_arguments)]
+async fn prepare_provider_launch(
+    state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    copilot_auth: State<'_, crate::commands::CopilotAuthState>,
+    app: String,
+    providerId: String,
+    cwd: Option<String>,
+    skipPermissions: Option<bool>,
+    extraArgs: Option<String>,
+) -> Result<(ProviderLaunch, Option<PathBuf>), String> {
     let app_type = AppType::from_str(&app)?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
     // 先拆参数：填错了直接报错，不必等到切完 agy 登录、写完临时文件。
@@ -241,10 +296,7 @@ pub async fn open_provider_terminal(
         return Err(e);
     }
 
-    launch_provider_terminal(&launch, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
-
-    Ok(true)
+    Ok((launch, launch_cwd))
 }
 
 /// 从提供商配置中提取环境变量

@@ -9,6 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tauri::AppHandle;
+#[cfg(feature = "desktop")]
 use tauri_plugin_opener::OpenerExt;
 use tool_lifecycle_progress::ToolLifecycleProgress;
 
@@ -58,6 +59,7 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
     let url = validate_external_url(&url)?;
@@ -69,6 +71,7 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     // Use spawn_blocking to avoid blocking the async runtime
@@ -85,6 +88,7 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     handle
@@ -117,6 +121,7 @@ fn portable_zip_url(version: &str, arm64: bool) -> Option<String> {
 
 /// 便携版更新：直接下载对应架构的新版压缩包（解压覆盖即可，数据在 ~/.cc-switch 不受影响）。
 /// 不做原地替换自身 exe：那样很容易被杀毒软件当成病毒拦截。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_portable_update_download(
     handle: AppHandle,
@@ -133,6 +138,7 @@ pub async fn open_portable_update_download(
 }
 
 /// 判断是否为便携版（绿色版）运行
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn is_portable_mode() -> Result<bool, String> {
     Ok(crate::app_update::is_portable())
@@ -1048,6 +1054,7 @@ pub(super) fn shell_single_quote(value: &str) -> String {
 
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
 /// theme: "dark" | "light" | "system"
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<(), String> {
     use tauri::Theme;

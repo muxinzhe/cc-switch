@@ -1,7 +1,9 @@
 #![allow(non_snake_case)]
 
 use tauri::{AppHandle, State};
+#[cfg(feature = "desktop")]
 use tauri_plugin_dialog::DialogExt;
+#[cfg(feature = "desktop")]
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
@@ -179,6 +181,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
     Ok(dir)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
     let config_dir = app_config_dir(&app)?;
@@ -195,6 +198,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
     Ok(true)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn pick_directory(
     app: AppHandle,
@@ -226,6 +230,7 @@ pub async fn pick_directory(
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
     let config_dir = config::get_app_config_dir();
@@ -243,6 +248,7 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
 }
 
 /// 在文件管理器中定位应用诊断日志 cc-switch.log；文件还没生成时打开日志目录
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn reveal_app_log_file() -> Result<bool, String> {
     let log_dir = crate::panic_hook::get_log_dir();

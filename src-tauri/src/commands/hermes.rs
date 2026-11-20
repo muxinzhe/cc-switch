@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use std::time::Duration;
 use tauri::{AppHandle, State};
+#[cfg(feature = "desktop")]
 use tauri_plugin_opener::OpenerExt;
 
 use super::run_db_task;
@@ -90,6 +91,7 @@ pub fn set_hermes_memory_enabled(
 /// injected into the returned HTML via `window.__HERMES_SESSION_TOKEN__`, so
 /// there is no need (and no way) for CC Switch to inject it — we just open
 /// the URL and let Hermes handle auth.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<(), String> {
     let port = std::env::var("HERMES_WEB_PORT")
@@ -129,6 +131,7 @@ pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<
 /// callers should reinvoke `open_hermes_web_ui` once the server is ready,
 /// since Hermes startup can take several seconds and may fail outright if
 /// the `hermes-agent[web]` extras are missing.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn launch_hermes_dashboard() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {

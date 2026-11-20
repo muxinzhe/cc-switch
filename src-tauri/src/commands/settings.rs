@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
+#[cfg(feature = "desktop")]
 use tauri_plugin_updater::UpdaterExt;
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
@@ -92,6 +93,7 @@ pub async fn save_settings(
         || merged.codex_stack_subagent_reasoning_effort
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
+    #[cfg(feature = "desktop")]
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
@@ -100,6 +102,7 @@ pub async fn save_settings(
     crate::settings::update_settings(merged)?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
+    #[cfg(feature = "desktop")]
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
     }
@@ -317,6 +320,7 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
 }
 
 /// 重启应用程序（当 app_config_dir 变更后使用）
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     crate::save_window_state_before_exit(&app);
@@ -340,6 +344,7 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 ///
 /// 自动更新已经在后台下好同一版本时直接用缓存的包（见 `app_update`）；检查更新失败
 /// （离线）但手里有下好的包，也装那个包。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
     // 弹窗、关于页、托盘可能先后点了安装：第二次直接拒绝，避免两次安装同时替换应用、做退出清理
@@ -396,6 +401,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
 /// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+#[cfg(feature = "desktop")]
 async fn install_and_restart(
     app: AppHandle,
     update: tauri_plugin_updater::Update,
@@ -439,6 +445,7 @@ async fn install_and_restart(
 }
 
 /// 自动更新的状态：能不能自动安装、是否在下载、已下好待装的版本。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_auto_update_status(
     state: tauri::State<'_, crate::store::AppState>,
@@ -449,6 +456,7 @@ pub async fn get_auto_update_status(
 }
 
 /// 立刻在后台检查并下载最新版本（打开自动更新开关时调用）。不支持自动安装的机器直接返回空。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn download_app_update(
     app: AppHandle,
@@ -464,6 +472,7 @@ pub async fn download_app_update(
 /// 数据库版本过新的恢复界面用它判断：升级应用能否解决问题。若返回 None，说明
 /// 已是最新版本，但数据库仍不兼容（通常由第三方客户端或更高版本创建），应提示用户
 /// 升级无法解决，而不是让其反复尝试。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
     let updater = app
@@ -478,6 +487,7 @@ pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>
 }
 
 /// 获取 app_config_dir 覆盖配置 (从 Store)
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_app_config_dir_override(app: AppHandle) -> Result<Option<String>, String> {
     Ok(crate::app_store::refresh_app_config_dir_override(&app)
@@ -485,6 +495,7 @@ pub async fn get_app_config_dir_override(app: AppHandle) -> Result<Option<String
 }
 
 /// 设置 app_config_dir 覆盖配置 (到 Store)
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_app_config_dir_override(
     app: AppHandle,
@@ -494,6 +505,7 @@ pub async fn set_app_config_dir_override(
     Ok(true)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import type { SubscriptionQuota } from "@/types/subscription";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 

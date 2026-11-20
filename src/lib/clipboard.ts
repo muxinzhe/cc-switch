@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import { isLinux } from "@/lib/platform";
 
 async function copyViaNative(text: string): Promise<void> {

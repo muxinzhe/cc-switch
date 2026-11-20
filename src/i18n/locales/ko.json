@@ -1,4 +1,26 @@
 {
+  "ssh": {
+    "title": "SSH 호스트",
+    "local": "이 컴퓨터",
+    "description": "로컬 SSH 설정에서 호스트를 선택하거나 연결 주소를 입력하세요.",
+    "destination": "SSH 연결 주소",
+    "placeholder": "SSH 별칭 또는 user@host",
+    "noAliases": "~/.ssh/config에서 호스트 별칭을 찾을 수 없습니다.",
+    "allMachines": "모든 컴퓨터",
+    "machineFilter": "컴퓨터",
+    "addHost": "호스트 추가",
+    "editHost": "호스트 편집",
+    "removeHost": "호스트 제거",
+    "fromConfig": "SSH 설정에서 선택",
+    "hostName": "표시 이름",
+    "port": "포트",
+    "identityFile": "키 파일",
+    "enableBackend": "백엔드 활성화",
+    "partialUsage": "합계는 현재 가져온 데이터를 기준으로 표시됩니다.",
+    "readOnly": "읽기 전용",
+    "noRemoteProfiles": "이 앱의 프로필이 없습니다.",
+    "liveProfile": "현재 네이티브 설정"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI용 종합 지원 도구"

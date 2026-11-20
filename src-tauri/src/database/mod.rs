@@ -126,6 +126,7 @@ pub struct Database {
     pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
 }
 
+#[cfg(feature = "desktop")]
 fn register_db_change_hook(conn: &Connection) {
     conn.update_hook(Some(
         |action: Action, _database: &str, table: &str, _row_id: i64| match action {
@@ -163,6 +164,7 @@ impl Database {
             conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
+        #[cfg(feature = "desktop")]
         register_db_change_hook(&conn);
 
         let db = Self {
@@ -227,6 +229,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        #[cfg(feature = "desktop")]
         register_db_change_hook(&conn);
 
         let db = Self {

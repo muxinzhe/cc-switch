@@ -1250,4 +1250,72 @@ describe("App integration with MSW", () => {
       document.removeEventListener("mousedown", documentMouseDown);
     }
   });
+  it("runs the original add and edit workflows against the selected SSH machine", async () => {
+    const oldUrl = `${window.location.pathname}${window.location.search}`;
+    const commands: {
+      hostId: string;
+      command: string;
+      args: { app?: string };
+    }[] = [];
+    window.history.replaceState(
+      null,
+      "",
+      "/provider-machine.html?host=server-b&app=codex&name=Machine+B",
+    );
+    vi.resetModules();
+    server.use(
+      http.post(
+        "http://tauri.local/ssh_provider_command",
+        async ({ request }) => {
+          const invocation =
+            (await request.json()) as (typeof commands)[number];
+          commands.push(invocation);
+          const response = await fetch(
+            `http://tauri.local/${invocation.command}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(invocation.args),
+            },
+          );
+          return HttpResponse.json({ data: await response.json(), events: [] });
+        },
+      ),
+    );
+    try {
+      const { default: App } = await import("@/App");
+      const mounted = renderApp(App);
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list")).toHaveTextContent(
+          "codex-1",
+        ),
+      );
+      expect(document.querySelector("nav")).toBeNull();
+      fireEvent.click(screen.getByText("create"));
+      expect(
+        await screen.findByTestId("add-provider-dialog"),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByText("confirm-add"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list")).toHaveTextContent(
+          "New codex Provider",
+        ),
+      );
+      expect(commands).toContainEqual(
+        expect.objectContaining({
+          hostId: "server-b",
+          command: "add_provider",
+          args: expect.objectContaining({ app: "codex" }),
+        }),
+      );
+      fireEvent.click(screen.getByText("edit"));
+      expect(
+        await screen.findByTestId("edit-provider-dialog"),
+      ).toBeInTheDocument();
+      mounted.unmount();
+    } finally {
+      window.history.replaceState(null, "", oldUrl);
+      vi.resetModules();
+    }
+  });
 });

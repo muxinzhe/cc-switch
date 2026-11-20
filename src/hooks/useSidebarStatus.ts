@@ -5,11 +5,16 @@ import * as authApi from "@/lib/api/auth";
 import type { ManagedAuthProvider } from "@/lib/api/auth";
 import { useProxyStatusQuery } from "@/lib/query/proxy";
 import { proxyApi } from "@/lib/api/proxy";
-import { useUsageSummary } from "@/lib/query/usage";
-import { parseFiniteNumber } from "@/components/usage/format";
+import { useUsageSummaryByApp } from "@/lib/query/usage";
+import {
+  aggregateSummaries,
+  parseFiniteNumber,
+} from "@/components/usage/format";
 import type { UsageRangeSelection } from "@/types/usage";
 import type { AppMode } from "@/types/proxy";
 import { ROUTE_MODE_APP_IDS, appHas } from "@/config/appSpecs";
+import { useMachineScope } from "@/ssh/MachineScope";
+import { useUsageMachineSource } from "@/ssh/UsageMachine";
 
 export interface AppNavStatus {
   mode: AppMode;
@@ -27,7 +32,7 @@ const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = [
 /**
  * 侧栏需要的状态：每个应用的模式标签和提醒、今日花费与 Token、授权中心是否有账号要重新登录。
  */
-export function useSidebarStatus() {
+export function useSidebarStatus(showToday: boolean) {
   const { data: proxyStatus } = useProxyStatusQuery();
   // 和应用页的模式行同一份数据（["providers", app, "mode"]），进出模式时一起刷新
   const modeQueries = useQueries({
@@ -36,9 +41,19 @@ export function useSidebarStatus() {
       queryFn: () => proxyApi.getAppMode(app),
     })),
   });
-  const { data: todaySummary } = useUsageSummary(TODAY, undefined, {
+  const machines = useMachineScope();
+  const usageSource = useUsageMachineSource(machines, 60_000, {
+    enabled: showToday,
+  });
+  const { data: todayByApp } = useUsageSummaryByApp(TODAY, undefined, {
+    source: usageSource,
+    enabled: showToday,
     refetchInterval: 60_000,
   });
+  const todaySummary =
+    usageSource.ready && todayByApp
+      ? aggregateSummaries(todayByApp.map(({ summary }) => summary))
+      : undefined;
 
   const authStatuses = useQueries({
     queries: MANAGED_AUTH_PROVIDERS.map((provider) => ({
@@ -88,6 +103,8 @@ export function useSidebarStatus() {
     todayTokens,
     todayRequests,
     todayHitRate,
+    todayUsagePartial:
+      showToday && Boolean(usageSource.error || usageSource.failures.length),
     authNeedsAttention,
   };
 }

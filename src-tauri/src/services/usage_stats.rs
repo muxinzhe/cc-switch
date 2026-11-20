@@ -379,8 +379,11 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// that don't exist in the providers table — the CASE expression below is the
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
+    let provider_id = format!(
+        "(CASE WHEN {log_alias}.provider_id LIKE 'ssh:%' THEN substr({log_alias}.provider_id, 42) ELSE {log_alias}.provider_id END)"
+    );
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
+        "COALESCE({provider_alias}.name, CASE {provider_id} \
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
@@ -395,7 +398,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
          WHEN '_omp_session' THEN 'Oh My Pi (Session)' \
-         ELSE {log_alias}.provider_id END)"
+         ELSE {provider_id} END)"
     )
 }
 
@@ -612,6 +615,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            AND {log_alias}.request_id NOT LIKE 'ssh:%'
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -710,6 +714,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      CASE WHEN dedup_p.app_type = 'claude-desktop' THEN 'claude' ELSE dedup_p.app_type END
                  )
              AND {ds_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+             AND dedup_s.request_id NOT LIKE 'ssh:%'
              AND dedup_s.input_tokens = dedup_p.input_tokens
              AND dedup_s.output_tokens = dedup_p.output_tokens
              AND dedup_s.cache_read_tokens = dedup_p.cache_read_tokens

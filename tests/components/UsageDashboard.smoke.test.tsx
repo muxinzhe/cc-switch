@@ -1,8 +1,17 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { UsagePage } from "@/components/usage/UsagePage";
+import { sshApi } from "@/ssh/api";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -140,6 +149,88 @@ describe("UsageDashboard (smoke)", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it("keeps the model tab, range, and dashboard mounted when filtering machines", async () => {
+    vi.spyOn(sshApi, "hosts").mockResolvedValue([
+      { id: "host-a", name: "Machine A", destination: "host-a", enabled: true },
+      { id: "host-b", name: "Machine B", destination: "host-b", enabled: true },
+      { id: "host-c", name: "Disabled", destination: "host-c", enabled: false },
+    ]);
+    const snapshot = vi
+      .spyOn(sshApi, "usageSnapshot")
+      .mockImplementation(async (hosts, includeLocal) => ({
+        id: includeLocal ? (hosts.length ? "combined" : "local") : hosts[0],
+        failures: [],
+      }));
+    const client = createTestQueryClient();
+    const user = userEvent.setup();
+    Element.prototype.scrollIntoView ??= () => {};
+    render(
+      <QueryClientProvider client={client}>
+        <UsagePage />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "ssh.machineFilter" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(snapshot).toHaveBeenCalledWith(["host-a", "host-b"], true),
+    );
+    const models = screen.getByRole("tab", { name: /^usage\.tabs\.models/ });
+    await user.click(models);
+    expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "ssh.machineFilter" }),
+    );
+    expect(screen.queryByRole("option", { name: "Disabled" })).toBeNull();
+    await user.click(await screen.findByRole("option", { name: "Machine A" }));
+    await waitFor(() =>
+      expect(snapshot).toHaveBeenCalledWith(["host-a"], false),
+    );
+    expect(models).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
+    expect(usageApiMock.getModelStats).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      "host-a",
+    );
+    expect(usageApiMock.getUsageTrends).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      "host-a",
+    );
+    expect(usageApiMock.getRequestLogs).toHaveBeenCalledWith(
+      expect.any(Object),
+      0,
+      20,
+      "host-a",
+    );
+
+    await user.click(
+      screen.getByRole("combobox", { name: "ssh.machineFilter" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "ssh.local" }));
+    await waitFor(() => expect(snapshot).toHaveBeenCalledWith([], true));
+    expect(models).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
+    expect(usageApiMock.getModelStats).toHaveBeenLastCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      "local",
+    );
+    client.clear();
+    vi.restoreAllMocks();
   });
 
   it("scans session logs on open and shows imported usage via the backend event", async () => {

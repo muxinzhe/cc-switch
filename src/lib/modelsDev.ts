@@ -1,7 +1,7 @@
 // models.dev 公共数据（https://models.dev/api.json）的拉取与原始结构。
 // 用量统计的价格导入和供应商表单的模型参数补全共用这一份数据和查询缓存。
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import { queryOptions } from "@tanstack/react-query";
 
 const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;

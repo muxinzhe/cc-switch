@@ -11,6 +11,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useUsageMachine } from "@/ssh/UsageMachine";
 import { useRequestDetail } from "@/lib/query/usage";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
@@ -119,6 +120,12 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
+  const machine = useUsageMachine();
+  const remote = machine?.scopeKey
+    ? /^ssh:([0-9a-f-]{36}):(.+)$/i.exec(request.requestId)
+    : null;
+  const requestId = remote?.[2] ?? request.requestId;
+  const origin = remote && machine?.hosts.find(({ id }) => id === remote[1]);
   const usd = (value: string) => money(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const freshInput = getFreshInputTokens(request);
@@ -182,13 +189,20 @@ function useDetailSections(request: RequestLog) {
       title: request.dataSource ?? "proxy",
     });
   }
+  if (origin) {
+    basic.push({
+      key: "machine",
+      label: t("ssh.machineFilter"),
+      value: origin.name,
+    });
+  }
   basic.push({
     key: "requestId",
     label: t("usage.requestId"),
-    value: request.requestId,
+    value: requestId,
     mono: true,
     copy: {
-      text: request.requestId,
+      text: requestId,
       label: t("usage.detail.copyRequestId"),
       copied: t("usage.detail.requestIdCopied"),
     },

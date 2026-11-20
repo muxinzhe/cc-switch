@@ -485,6 +485,7 @@ export function SessionReader({
     () => ({
       providerId: session.providerId,
       sourcePath: session.sourcePath ?? undefined,
+      isRemote: Boolean(session.machineId),
       projectDir: session.projectDir ?? undefined,
       style,
       appName,
@@ -495,6 +496,7 @@ export function SessionReader({
       appName,
       highlightQuery,
       onCopy,
+      session.machineId,
       session.projectDir,
       session.providerId,
       session.sourcePath,

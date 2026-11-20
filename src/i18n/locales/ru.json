@@ -1,4 +1,26 @@
 {
+  "ssh": {
+    "title": "Хосты SSH",
+    "local": "Этот компьютер",
+    "description": "Выберите хост из локальной конфигурации SSH или введите адрес.",
+    "destination": "Адрес SSH",
+    "placeholder": "Псевдоним SSH или user@host",
+    "noAliases": "В ~/.ssh/config нет псевдонимов хостов.",
+    "allMachines": "Все компьютеры",
+    "machineFilter": "Компьютер",
+    "addHost": "Добавить хост",
+    "editHost": "Изменить хост",
+    "removeHost": "Удалить хост",
+    "fromConfig": "Выбрать из настроек SSH",
+    "hostName": "Отображаемое имя",
+    "port": "Порт",
+    "identityFile": "Файл ключа",
+    "enableBackend": "Включить серверную часть",
+    "partialUsage": "Итоги отражают уже доступные данные.",
+    "readOnly": "Только чтение",
+    "noRemoteProfiles": "Профили приложения не найдены.",
+    "liveProfile": "Текущая конфигурация приложения"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Универсальный помощник для Claude Code, Codex и Gemini CLI"

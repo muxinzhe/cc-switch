@@ -1,4 +1,26 @@
 {
+  "ssh": {
+    "title": "SSH sunucuları",
+    "local": "Bu bilgisayar",
+    "description": "Yerel SSH yapılandırmanızdan bir sunucu seçin veya bağlantı adresini girin.",
+    "destination": "SSH bağlantı adresi",
+    "placeholder": "SSH takma adı veya user@host",
+    "noAliases": "~/.ssh/config içinde sunucu takma adı bulunamadı.",
+    "allMachines": "Tüm makineler",
+    "machineFilter": "Makine",
+    "addHost": "Sunucu ekle",
+    "editHost": "Sunucuyu düzenle",
+    "removeHost": "Sunucuyu kaldır",
+    "fromConfig": "SSH yapılandırmasından seç",
+    "hostName": "Görünen ad",
+    "port": "Bağlantı noktası",
+    "identityFile": "Anahtar dosyası",
+    "enableBackend": "Arka ucu etkinleştir",
+    "partialUsage": "Toplamlar şu anda erişilebilen verileri içerir.",
+    "readOnly": "Salt okunur",
+    "noRemoteProfiles": "Bu uygulama için profil bulunamadı.",
+    "liveProfile": "Güncel yerel yapılandırma"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code, Codex ve Gemini CLI için Hepsi Bir Arada Asistan"

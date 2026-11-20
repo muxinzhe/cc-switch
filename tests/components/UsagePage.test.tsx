@@ -1,7 +1,7 @@
-import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UsagePage } from "@/components/usage/UsagePage";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { renderWithQueryClient } from "../utils/testQueryClient";
 
 const autoSaveSettings = vi.hoisted(() => vi.fn());
 const settingsState = vi.hoisted(() => ({
@@ -13,7 +13,10 @@ const settingsState = vi.hoisted(() => ({
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({ settings: settingsState.current, autoSaveSettings }),
 }));
-vi.mock("@/components/usage/UsageDashboard", () => ({
+vi.mock("@/components/usage/UsageDashboard", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/components/usage/UsageDashboard")
+  >()),
   UsageDashboard: vi.fn(() => null),
 }));
 
@@ -29,7 +32,7 @@ describe("UsagePage settings persistence", () => {
 
   it("tells the dashboard settings are not ready until they load", () => {
     settingsState.current = null;
-    const { rerender } = render(<UsagePage />);
+    const { rerender } = renderWithQueryClient(<UsagePage />);
     expect(vi.mocked(UsageDashboard).mock.lastCall![0]).toMatchObject({
       settingsReady: false,
     });
@@ -51,7 +54,7 @@ describe("UsagePage settings persistence", () => {
         finish = resolve;
       }),
     );
-    render(<UsagePage />);
+    renderWithQueryClient(<UsagePage />);
     const onChange =
       vi.mocked(UsageDashboard).mock.calls[0][0]!.onRefreshIntervalChange!;
     const settled = vi.fn();
@@ -72,7 +75,7 @@ describe("UsagePage settings persistence", () => {
       if (failure === "rejected")
         autoSaveSettings.mockRejectedValue(new Error("save failed"));
       else autoSaveSettings.mockResolvedValue(null);
-      render(<UsagePage />);
+      renderWithQueryClient(<UsagePage />);
       const props = vi.mocked(UsageDashboard).mock.calls[0][0]!;
       await expect(props.onRefreshIntervalChange!(5000)).resolves.toBe(false);
       await expect(props.onSessionAutoSyncEnabledChange!(false)).resolves.toBe(

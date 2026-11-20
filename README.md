@@ -552,7 +552,7 @@ Note: Routing and Aggregation write `127.0.0.1` as the address into the config. 
 <details>
 <summary><strong>Is there a command-line or headless version?</strong></summary>
 
-CC Switch itself only ships as a desktop app that requires a graphical interface (see [Download & Installation](#download--installation) for system requirements). For servers, SSH sessions, or machines without a desktop environment, we recommend the community-maintained **[CC Switch CLI](https://github.com/SaladDay/cc-switch-cli)**: it offers both an interactive terminal UI (TUI) and a command-line mode, supports Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, and Pi, and can be installed via Homebrew (`brew install cc-switch-cli`) or an install script.
+Connect to Linux servers and view sessions and usage with [SSH hosts](docs/user-manual/en/1-getting-started/1.6-ssh.md). For direct use in a terminal, see the community-maintained **[CC Switch CLI](https://github.com/SaladDay/cc-switch-cli)**: it offers both an interactive terminal UI (TUI) and a command-line mode, supports Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, and Pi, and can be installed via Homebrew (`brew install cc-switch-cli`) or an install script.
 
 By default, CC Switch CLI shares the `~/.cc-switch` data directory with the desktop app and is compatible with the desktop app's WebDAV sync. The two projects are released separately, and the database version the CLI supports sometimes lags behind the desktop app; if you see a "database version is too new" message, upgrade the CLI or wait for it to catch up.
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/machineEvents";
 import {
   DeepLinkImportRequest,
   PendingDeepLink,

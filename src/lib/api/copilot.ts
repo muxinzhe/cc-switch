@@ -5,7 +5,7 @@
  * 支持多账号管理。
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 
 /**
  * GitHub 账号信息（公开信息）

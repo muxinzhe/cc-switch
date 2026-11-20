@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/machineIpc";
 import {
   shouldRefreshRates,
   resolveMoneyDisplay,

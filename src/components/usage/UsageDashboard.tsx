@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -43,11 +43,13 @@ import {
 } from "@/types/usage";
 import {
   usageKeys,
+  useScopedUsageQuery,
   useModelStats,
   useProviderStats,
   useRequestLogs,
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
+import { useUsageMachine } from "@/ssh/UsageMachine";
 import { useSettingsQuery } from "@/lib/query";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
@@ -92,7 +94,7 @@ const isRefreshIntervalOption = (
 ): value is RefreshIntervalOption =>
   REFRESH_INTERVAL_OPTIONS_MS.includes(value as RefreshIntervalOption);
 
-const normalizeRefreshInterval = (value: number | undefined) =>
+export const normalizeRefreshInterval = (value: number | undefined) =>
   isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
 // 常见的网关 / 上游错误码也列上（520/529 是 Cloudflare、Anthropic 自己返回的）
@@ -228,6 +230,8 @@ function ScopeModelItems({
 }
 
 interface UsageDashboardProps {
+  machinePicker?: ReactNode;
+  machineNotice?: ReactNode;
   refreshIntervalMs?: number;
   onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
   sessionAutoSyncEnabled?: boolean;
@@ -251,6 +255,8 @@ interface UsageDashboardProps {
  * 用量统计全局页：页头 → 范围栏 → 概览面板（指标条 + 趋势图 / 热力图）→ 明细面板（请求日志 / 供应商 / 模型）。
  */
 export function UsageDashboard({
+  machinePicker,
+  machineNotice,
   refreshIntervalMs: savedRefreshIntervalMs,
   onRefreshIntervalChange,
   sessionAutoSyncEnabled = true,
@@ -263,6 +269,8 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const machine = useUsageMachine();
+  const machineQuery = useScopedUsageQuery();
   const [range, setRange] = useState<UsageRangeSelection>(() => ({
     preset: readRememberedChoice(
       USAGE_CHOICE_KEYS.range,
@@ -323,11 +331,21 @@ export function UsageDashboard({
   const { syncSessionUsage } = useUsageAutoRefresh({
     refreshIntervalMs,
     sessionAutoSyncEnabled,
-    paused: rebuildingCodex || !settingsReady,
+    paused:
+      rebuildingCodex || !settingsReady || machine?.includeLocal === false,
     // 预设范围和「结束于现在」的自定义范围都随时间移动，没有新用量也要定时重算
     rollingRange: range.preset !== "custom" || !!range.liveEndTime,
   });
-  const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
+  const lastSyncAt =
+    Math.max(
+      machine?.includeLocal === false ? 0 : (lastManualSyncAt ?? 0),
+      machine?.includeLocal === false ? 0 : (lastScanAt ?? 0),
+      machine?.updatedAt ?? 0,
+    ) || null;
+  const scopeKey = machine?.scopeKey;
+  useEffect(() => {
+    setDetailRequestId(null);
+  }, [scopeKey]);
   const [containerRef, measuredWidth] = useElementWidth<HTMLDivElement>();
   const now = useMinuteTicker();
 
@@ -413,7 +431,12 @@ export function UsageDashboard({
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
+      if (machine?.includeLocal === false) {
+        await machine.refresh?.();
+        return;
+      }
       const result = await syncSessionUsage();
+      await machine?.refresh?.();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
@@ -466,8 +489,19 @@ export function UsageDashboard({
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
   const { data: allTimeSummary } = useQuery({
-    queryKey: [...usageKeys.all, "all-time-summary"],
-    queryFn: () => usageApi.getUsageSummary(),
+    queryKey: machineQuery.key([...usageKeys.all, "all-time-summary"]),
+    enabled: machineQuery.enabled,
+    queryFn: () =>
+      machineQuery.args.length
+        ? usageApi.getUsageSummary(
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            ...machineQuery.args,
+          )
+        : usageApi.getUsageSummary(),
     refetchInterval: refetch.refetchInterval,
   });
   const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
@@ -587,6 +621,7 @@ export function UsageDashboard({
   // 范围栏：决定下面所有数据的四个条件放一组、左对齐；时间排第一，图表和指标都跟着它
   const filterRow = (
     <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-6 py-2">
+      {machinePicker}
       <UsageDateRangePicker
         selection={range}
         triggerLabel={rangeLabel}
@@ -974,6 +1009,7 @@ export function UsageDashboard({
         actions={headerActions}
       />
       {filterRow}
+      {machineNotice}
       {body}
 
       <RequestDetailPanel

@@ -1,0 +1,19 @@
+{
+  "version": "4.0.36",
+  "items": [
+    {
+      "type": "new",
+      "zh": "在主窗口管理 SSH 主机的供应商、会话和用量",
+      "zh-TW": "在主視窗管理 SSH 主機的供應商、對話和用量",
+      "en": "Manage SSH host providers, sessions, and usage from the main window",
+      "ja": "メインウィンドウで SSH ホストのプロバイダー、セッション、使用量を管理"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 用量漏记和供应商归属，统一托盘与主窗口汇总",
+      "zh-TW": "修正 Codex 用量遺漏和供應商歸屬，統一系統匣與主視窗統計",
+      "en": "Fix Codex usage attribution and align tray totals with the main window",
+      "ja": "Codex の使用量集計と提供元の識別を修正し、トレイとメイン画面の合計を統一"
+    }
+  ]
+}

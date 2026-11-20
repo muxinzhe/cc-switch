@@ -1,4 +1,26 @@
 {
+  "ssh": {
+    "title": "SSH ホスト",
+    "local": "このコンピューター",
+    "description": "ローカルの SSH 設定からホストを選ぶか、接続先を入力してください。",
+    "destination": "SSH 接続先",
+    "placeholder": "SSH エイリアスまたは user@host",
+    "noAliases": "~/.ssh/config にホストのエイリアスがありません。",
+    "allMachines": "すべてのマシン",
+    "machineFilter": "マシン",
+    "addHost": "ホストを追加",
+    "editHost": "ホストを編集",
+    "removeHost": "ホストを削除",
+    "fromConfig": "SSH 設定から選択",
+    "hostName": "表示名",
+    "port": "ポート",
+    "identityFile": "秘密鍵ファイル",
+    "enableBackend": "バックエンドを有効化",
+    "partialUsage": "合計は現在取得できたデータで計算しています。",
+    "readOnly": "読み取り専用",
+    "noRemoteProfiles": "このアプリの設定が見つかりません。",
+    "liveProfile": "現在のネイティブ設定"
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"

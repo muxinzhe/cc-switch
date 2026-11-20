@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
+import { remoteConfiguration } from "@/lib/machineIpc";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
 import {
   canSwitchAgyAccount,
@@ -27,13 +28,18 @@ import { cn } from "@/lib/utils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import { isCopilotOfficialCard } from "@/config/copilotConfig";
 
-const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
+function machineStorageKey(key: string) {
+  return remoteConfiguration ? `${key}:${remoteConfiguration.hostId}` : key;
+}
+
+const STORAGE_KEY = machineStorageKey("cc-switch:terminal:recent-dirs");
 const MAX_RECENT = 5;
 /** 跳过权限确认按应用分别记住：同一个人可能只在其中一个工具里这么用 */
 const skipPermissionsKey = (appId: AppId) =>
-  `cc-switch:terminal:skip-permissions:${appId}`;
+  machineStorageKey(`cc-switch:terminal:skip-permissions:${appId}`);
 /** 附加参数同样按应用记住：各个 CLI 的参数互不通用 */
-const extraArgsKey = (appId: AppId) => `cc-switch:terminal:extra-args:${appId}`;
+const extraArgsKey = (appId: AppId) =>
+  machineStorageKey(`cc-switch:terminal:extra-args:${appId}`);
 
 function readRecent(): string[] {
   try {
@@ -271,7 +277,7 @@ export function OpenTerminalDialog({
     if (!provider) return;
     const stored = readRecent();
     setRecent(stored);
-    setDir(stored[0] ?? null);
+    setDir(stored[0] ?? (remoteConfiguration ? "." : null));
     setSkipPermissions(readSkipPermissions(appId));
     setExtraArgs(readExtraArgs(appId));
     setOpening(false);
@@ -388,32 +394,43 @@ export function OpenTerminalDialog({
             </Notice>
           )}
 
-          <div className="flex items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-control border border-border bg-subtle px-3 py-2">
-              <Folder
-                className="h-4 w-4 shrink-0 text-fg-3"
-                strokeWidth={1.5}
-              />
-              {dir ? (
-                <DirLabel dir={dir} />
-              ) : (
-                <span className="text-body text-fg-3">
-                  {t("provider.openTerminalDialog.noDir")}
-                </span>
-              )}
-            </div>
-            <Button
-              type="button"
-              variant="neutral"
-              size="compact"
+          {remoteConfiguration ? (
+            <Input
+              value={dir ?? ""}
+              onChange={(event) => setDir(event.target.value)}
+              aria-label={t("ssh.remoteDirectory", {
+                defaultValue: "Directory on the SSH host",
+              })}
               disabled={opening}
-              onClick={() => void handleChoose()}
-            >
-              {dir
-                ? t("provider.openTerminalDialog.change")
-                : t("provider.openTerminalDialog.choose")}
-            </Button>
-          </div>
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-control border border-border bg-subtle px-3 py-2">
+                <Folder
+                  className="h-4 w-4 shrink-0 text-fg-3"
+                  strokeWidth={1.5}
+                />
+                {dir ? (
+                  <DirLabel dir={dir} />
+                ) : (
+                  <span className="text-body text-fg-3">
+                    {t("provider.openTerminalDialog.noDir")}
+                  </span>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="neutral"
+                size="compact"
+                disabled={opening}
+                onClick={() => void handleChoose()}
+              >
+                {dir
+                  ? t("provider.openTerminalDialog.change")
+                  : t("provider.openTerminalDialog.choose")}
+              </Button>
+            </div>
+          )}
 
           {otherRecent.length > 0 && (
             <div className="space-y-1">

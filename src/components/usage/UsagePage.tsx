@@ -2,9 +2,16 @@ import { useSettings } from "@/hooks/useSettings";
 import { useAutoExchangeRates } from "@/hooks/useAutoExchangeRates";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { AppTypeFilter } from "@/types/usage";
-import { UsageDashboard } from "./UsageDashboard";
+import { MachinePicker, useMachineScope } from "@/ssh/MachineScope";
+import {
+  UsageMachineNotice,
+  UsageMachineProvider,
+  useUsageMachineSource,
+} from "@/ssh/UsageMachine";
+import { normalizeRefreshInterval, UsageDashboard } from "./UsageDashboard";
 
 interface UsagePageProps {
+  initialMachine?: string;
   /** 从应用页「查看此应用的用量」进入时带上的应用筛选 */
   initialAppType?: AppTypeFilter;
   /** 打开设置 → 本地路由（「记录请求用量」开关在那里） */
@@ -13,6 +20,7 @@ interface UsagePageProps {
 
 /** 侧栏「用量统计」全局页（v7 S6）：不开路由也有数据（读会话日志）。 */
 export function UsagePage({
+  initialMachine,
   initialAppType,
   onOpenRoutingSettings,
 }: UsagePageProps = {}) {
@@ -34,21 +42,38 @@ export function UsagePage({
     settings != null,
   );
 
+  const machines = useMachineScope(initialMachine);
+  const source = useUsageMachineSource(
+    machines,
+    settings && settings.sessionAutoSyncEnabled !== false
+      ? normalizeRefreshInterval(settings.usageDashboardRefreshIntervalMs)
+      : false,
+    { forceSyncOnRefresh: settings?.sessionAutoSyncEnabled === false },
+  );
+
   return (
-    <UsageDashboard
-      refreshIntervalMs={settings?.usageDashboardRefreshIntervalMs}
-      onRefreshIntervalChange={(usageDashboardRefreshIntervalMs) =>
-        save({ usageDashboardRefreshIntervalMs })
-      }
-      sessionAutoSyncEnabled={settings?.sessionAutoSyncEnabled ?? true}
-      settingsReady={settings != null}
-      onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
-        save({ sessionAutoSyncEnabled })
-      }
-      initialAppType={initialAppType}
-      onOpenRoutingSettings={onOpenRoutingSettings}
-      usageDisplay={settings?.usageDisplay}
-      onUsageDisplayChange={(usageDisplay) => save({ usageDisplay })}
-    />
+    <UsageMachineProvider value={source}>
+      <UsageDashboard
+        machinePicker={
+          machines.hosts.length > 0 ? (
+            <MachinePicker {...machines} />
+          ) : undefined
+        }
+        machineNotice={<UsageMachineNotice source={source} />}
+        refreshIntervalMs={settings?.usageDashboardRefreshIntervalMs}
+        onRefreshIntervalChange={(usageDashboardRefreshIntervalMs) =>
+          save({ usageDashboardRefreshIntervalMs })
+        }
+        sessionAutoSyncEnabled={settings?.sessionAutoSyncEnabled ?? true}
+        settingsReady={settings != null}
+        onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
+          save({ sessionAutoSyncEnabled })
+        }
+        initialAppType={initialAppType}
+        onOpenRoutingSettings={onOpenRoutingSettings}
+        usageDisplay={settings?.usageDisplay}
+        onUsageDisplayChange={(usageDisplay) => save({ usageDisplay })}
+      />
+    </UsageMachineProvider>
   );
 }

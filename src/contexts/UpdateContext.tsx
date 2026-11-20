@@ -6,7 +6,8 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/machineEvents";
+import { remoteConfiguration } from "@/lib/machineIpc";
 import type { ReadyUpdate, UpdateInfo } from "../lib/updater";
 import { UPDATE_READY_EVENT, checkForUpdate } from "../lib/updater";
 import { settingsApi } from "../lib/api/settings";
@@ -81,6 +82,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const [downloadRequested, setDownloadRequested] = useState(false);
 
   const refreshAutoUpdate = useCallback(async () => {
+    if (remoteConfiguration) return;
     try {
       const status = await settingsApi.getAutoUpdateStatus();
       setAutoUpdateSupported(status.supported);

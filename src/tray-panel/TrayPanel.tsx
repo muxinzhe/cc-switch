@@ -7,7 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/machineEvents";
 import { useQueryClient } from "@tanstack/react-query";
 import i18n from "i18next";
 import {

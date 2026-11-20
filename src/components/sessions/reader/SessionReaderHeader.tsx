@@ -399,12 +399,22 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         </span>
       }
       titleExtra={
-        <span className="sr-only">
-          {t("sessionManager.sessionOf", {
-            defaultValue: "{{app}} 的会话",
-            app: appName,
-          })}
-        </span>
+        <>
+          <span className="sr-only">
+            {t("sessionManager.sessionOf", {
+              defaultValue: "{{app}} 的会话",
+              app: appName,
+            })}
+          </span>
+          {session.machineName && (
+            <span
+              className="max-w-32 truncate text-caption text-fg-2"
+              title={session.machineName}
+            >
+              {session.machineName}
+            </span>
+          )}
+        </>
       }
       actions={
         <>
@@ -581,7 +591,11 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
       <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-72">
           {session.projectDir ? (
-            <PathChip path={session.projectDir} className="max-w-full" />
+            <PathChip
+              path={session.projectDir}
+              className="max-w-full"
+              canReveal={!session.machineId}
+            />
           ) : (
             <span className="text-caption text-fg-2">
               {t("sessionManager.unknownDirectory", {
@@ -817,7 +831,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
         {model && (
           <span className="min-w-0 [overflow-wrap:anywhere]">{model}</span>
         )}
-        <SessionUsageSummary session={session} />
+        {!session.machineId && <SessionUsageSummary session={session} />}
       </div>
 
       {noResumeReason && (

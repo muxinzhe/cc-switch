@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import type {
   UsageSummary,
   UsageSummaryByApp,
@@ -54,6 +54,7 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
@@ -61,6 +62,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -76,12 +78,14 @@ export const usageApi = {
     endDate?: number,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
       endDate,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -91,6 +95,7 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
@@ -98,6 +103,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -106,11 +112,13 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<string | null> => {
     return invoke("get_usage_first_date", {
       appType,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -120,6 +128,7 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
@@ -127,6 +136,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -136,6 +146,7 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    snapshotId?: string,
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
@@ -143,6 +154,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
@@ -150,16 +162,24 @@ export const usageApi = {
     filters: LogFilters,
     page: number = 0,
     pageSize: number = 20,
+    snapshotId?: string,
   ): Promise<PaginatedLogs> => {
     return invoke("get_request_logs", {
       filters,
       page,
       pageSize,
+      ...(snapshotId ? { snapshotId } : {}),
     });
   },
 
-  getRequestDetail: async (requestId: string): Promise<RequestLog | null> => {
-    return invoke("get_request_detail", { requestId });
+  getRequestDetail: async (
+    requestId: string,
+    snapshotId?: string,
+  ): Promise<RequestLog | null> => {
+    return invoke("get_request_detail", {
+      requestId,
+      ...(snapshotId ? { snapshotId } : {}),
+    });
   },
 
   getModelPricing: async (): Promise<ModelPricing[]> => {

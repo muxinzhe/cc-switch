@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@/lib/machineIpc";
+import { listen } from "@/lib/machineEvents";
 import { exit } from "@tauri-apps/plugin-process";
 import {
   Database,

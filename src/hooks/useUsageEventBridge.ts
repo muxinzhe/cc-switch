@@ -1,5 +1,6 @@
 import { focusManager, useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
+import { LOCAL_USAGE_SNAPSHOT_KEY } from "@/ssh/UsageMachine";
 import { useTauriEvent } from "./useTauriEvent";
 
 /**
@@ -15,11 +16,17 @@ export function useUsageEventBridge() {
   const queryClient = useQueryClient();
 
   useTauriEvent("usage-log-recorded", () => {
+    const refetchType = focusManager.isFocused() ? "active" : "none";
+    void queryClient.invalidateQueries({
+      queryKey: LOCAL_USAGE_SNAPSHOT_KEY,
+      exact: true,
+      refetchType,
+    });
     // Mark inactive-window data stale without repeatedly querying SQLite. The
     // normal focus refetch catches up when the user returns to the window.
     void queryClient.invalidateQueries({
       queryKey: usageKeys.all,
-      refetchType: focusManager.isFocused() ? "active" : "none",
+      refetchType,
     });
   });
 }

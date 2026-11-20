@@ -49,8 +49,28 @@ pub(super) struct ToolLifecycleProgress {
 }
 
 impl ToolLifecycleProgress {
+    #[cfg(feature = "desktop")]
     pub fn from_app<R: tauri::Runtime>(app: tauri::AppHandle<R>, tools: &[&str]) -> Self {
         use tauri::Emitter;
+        Self::with_emitter(tools, move |payload| {
+            app.emit(TOOL_LIFECYCLE_PROGRESS_EVENT, payload)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    pub fn from_app(app: tauri::AppHandle, tools: &[&str]) -> Self {
+        use tauri::Emitter;
+        Self::with_emitter(tools, move |payload| {
+            app.emit(TOOL_LIFECYCLE_PROGRESS_EVENT, payload)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn with_emitter(
+        tools: &[&str],
+        emit: impl Fn(ToolLifecycleProgressPayload) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
         Self::with_sink(
             tools,
             Arc::new(move |payload| {
@@ -66,7 +86,7 @@ impl ToolLifecycleProgress {
                     }
                     ToolLifecycleStage::Output => {}
                 }
-                if let Err(e) = app.emit(TOOL_LIFECYCLE_PROGRESS_EVENT, payload) {
+                if let Err(e) = emit(payload) {
                     log::debug!("推送工具安装进度失败: {e}");
                 }
             }),

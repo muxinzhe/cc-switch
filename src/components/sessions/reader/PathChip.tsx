@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/machineIpc";
 import { FileText, FolderOpen } from "lucide-react";
 import { memo, useCallback, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -66,6 +66,7 @@ export interface PathChipProps {
   searchQuery?: string;
   /** 自定义「在 Finder 中显示」；不传时调用 `reveal_session_path` */
   onReveal?: (path: string) => void;
+  canReveal?: boolean;
   className?: string;
 }
 
@@ -79,6 +80,7 @@ export const PathChip = memo(function PathChip({
   label,
   searchQuery,
   onReveal,
+  canReveal = true,
   className,
 }: PathChipProps) {
   const { t } = useTranslation();
@@ -143,16 +145,18 @@ export const PathChip = memo(function PathChip({
             (searchQuery ? highlightText(display, searchQuery) : display)}
         </span>
       </button>
-      <HoverTip content={revealLabel}>
-        <button
-          type="button"
-          aria-label={revealLabel}
-          onClick={() => void handleReveal()}
-          className="inline-flex h-full shrink-0 items-center rounded-e-control border-s border-border px-1 py-0.5 text-fg-3 transition-colors hover:bg-selected hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <FolderOpen aria-hidden className="size-3" />
-        </button>
-      </HoverTip>
+      {canReveal && (
+        <HoverTip content={revealLabel}>
+          <button
+            type="button"
+            aria-label={revealLabel}
+            onClick={() => void handleReveal()}
+            className="inline-flex h-full shrink-0 items-center rounded-e-control border-s border-border px-1 py-0.5 text-fg-3 transition-colors hover:bg-selected hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <FolderOpen aria-hidden className="size-3" />
+          </button>
+        </HoverTip>
+      )}
     </span>
   );
 });

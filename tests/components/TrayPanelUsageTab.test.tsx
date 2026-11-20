@@ -3,6 +3,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { UsageTab } from "@/tray-panel/UsageTab";
+import { usageApi } from "@/lib/api";
+import { sshApi } from "@/ssh/api";
 import type { Settings } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -28,17 +30,22 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   usageApi: {
     getUsageFirstDate: vi.fn().mockResolvedValue(null),
-    getUsageSummary: vi.fn().mockResolvedValue({
-      totalRequests: 3,
-      totalCost: "1.5",
-      totalInputTokens: 100,
-      totalOutputTokens: 50,
-      totalCacheCreationTokens: 0,
-      totalCacheReadTokens: 0,
-      successRate: 1,
-      realTotalTokens: 150,
-      cacheHitRate: 0,
-    }),
+    getUsageSummaryByApp: vi.fn().mockResolvedValue([
+      {
+        appType: "codex",
+        summary: {
+          totalRequests: 3,
+          totalCost: "1.5",
+          totalInputTokens: 100,
+          totalOutputTokens: 50,
+          totalCacheCreationTokens: 0,
+          totalCacheReadTokens: 0,
+          successRate: 1,
+          realTotalTokens: 150,
+          cacheHitRate: 0,
+        },
+      },
+    ]),
     getUsageTrends: vi.fn().mockImplementation(async (start: number) => [
       {
         date: new Date((start + 60) * 1000).toISOString(),
@@ -51,6 +58,18 @@ vi.mock("@/lib/api", async (importOriginal) => ({
         totalCacheReadTokens: 0,
       },
     ]),
+  },
+}));
+
+vi.mock("@/ssh/api", () => ({
+  sshApi: {
+    hosts: vi.fn().mockResolvedValue([
+      { id: "enabled", enabled: true },
+      { id: "disabled", enabled: false },
+    ]),
+    usageSnapshot: vi
+      .fn()
+      .mockResolvedValue({ id: "all-machines", failures: [] }),
   },
 }));
 
@@ -88,5 +107,21 @@ describe("tray panel UsageTab", () => {
       usageDisplay: { currency: "CNY", exchangeRates: { CNY: 7 } },
     });
     expect(await screen.findByText("¥10.50")).toBeInTheDocument();
+    expect(sshApi.usageSnapshot).toHaveBeenCalledWith(["enabled"], true);
+    expect(usageApi.getUsageSummaryByApp).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      undefined,
+      undefined,
+      "all-machines",
+    );
+    expect(usageApi.getUsageTrends).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      "all-machines",
+    );
   });
 });

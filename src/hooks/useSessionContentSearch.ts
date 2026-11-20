@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@/lib/machineEvents";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
 import type { SessionContentHit, SessionIndexStatus } from "@/types";

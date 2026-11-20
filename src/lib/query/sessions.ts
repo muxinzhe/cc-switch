@@ -4,11 +4,13 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { sshApi, sshKeys } from "@/ssh/api";
 import { sessionsApi } from "@/lib/api/sessions";
 import type {
   ContentRef,
   ImageRef,
   SessionMessage,
+  SessionMeta,
   TranscriptChunk,
 } from "@/types";
 import { buildTurnIndex, buildTurns } from "@/components/sessions/reader/turns";
@@ -185,19 +187,35 @@ export interface SessionTranscriptResult {
 export const useSessionTranscript = (
   providerId?: string,
   sourcePath?: string,
+  remoteSession?: SessionMeta | null,
 ): SessionTranscriptResult => {
   const queryClient = useQueryClient();
-  const queryKey = sessionKeys.transcript(providerId, sourcePath);
+  const machineId = remoteSession?.machineId;
+  const queryKey = machineId
+    ? [
+        ...sshKeys.host(machineId),
+        "messages",
+        providerId,
+        remoteSession.sessionId,
+      ]
+    : sessionKeys.transcript(providerId, sourcePath);
   const query = useQuery<TranscriptState>({
     queryKey,
     queryFn: async () => {
+      if (machineId) {
+        return {
+          header: null,
+          messages: await sshApi.messages(machineId, remoteSession),
+          done: true,
+        };
+      }
       const previous = queryClient.getQueryData<TranscriptState>(queryKey);
       const live = !previous?.done;
       return loadTranscript(providerId!, sourcePath!, (state) => {
         if (live) queryClient.setQueryData(queryKey, state);
       });
     },
-    enabled: Boolean(providerId && sourcePath),
+    enabled: Boolean(providerId && (sourcePath || machineId)),
     staleTime: 30 * 1000,
   });
   const data = query.data ?? EMPTY_TRANSCRIPT;

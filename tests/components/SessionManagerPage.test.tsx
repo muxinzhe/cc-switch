@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import { sshApi } from "@/ssh/api";
 import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
 import { settingsApi } from "@/lib/api/settings";
@@ -256,7 +257,69 @@ describe("SessionManagerPage", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("keeps the original list and reader for sessions with the same ID on different machines", async () => {
+    vi.spyOn(sshApi, "hosts").mockResolvedValue([
+      { id: "host-a", name: "Machine A", destination: "host-a", enabled: true },
+      { id: "host-b", name: "Machine B", destination: "host-b", enabled: true },
+    ]);
+    vi.spyOn(sshApi, "sessions").mockImplementation(async (hostId) => [
+      {
+        providerId: "codex",
+        sessionId: "codex-session-1",
+        title: hostId === "host-a" ? "SSH transcript A" : "SSH transcript B",
+        sourcePath: "/mock/codex/session-1.jsonl",
+        projectDir: "/mock/codex",
+        createdAt: Date.now() - HOUR,
+      },
+    ]);
+    const messages = vi.spyOn(sshApi, "messages").mockResolvedValue([
+      { role: "user", content: "Message from SSH" },
+      { role: "assistant", content: "Reply from SSH" },
+    ]);
+    localStorage.setItem(
+      EXPANDED_KEY,
+      JSON.stringify([
+        "/mock/codex",
+        "ssh:host-a:/mock/codex",
+        "ssh:host-b:/mock/codex",
+      ]),
+    );
+    renderPage();
+    expect(
+      await screen.findByRole("button", { name: "Alpha Session" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "SSH transcript A" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "SSH transcript B" }),
+    ).toBeInTheDocument();
+    Element.prototype.scrollIntoView ??= () => {};
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "ssh.machineFilter" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Machine A" }),
+    );
+    expect(screen.queryByRole("button", { name: "Alpha Session" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "SSH transcript B" }),
+    ).toBeNull();
+    openRow("SSH transcript A");
+    expect(
+      await screen.findByText("Reply from SSH", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(messages).toHaveBeenCalledWith(
+      "host-a",
+      expect.objectContaining({
+        sessionId: "codex-session-1",
+        sourcePath: undefined,
+      }),
+    );
   });
 
   it("shows Oh My Pi sessions from its app and in the all-apps filter", async () => {

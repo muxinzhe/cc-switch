@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@/lib/machineIpc";
+import { listen, type UnlistenFn } from "@/lib/machineEvents";
 import type { AppId } from "@/lib/api/types";
 import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
 import { APP_IDS } from "@/config/appSpecs";

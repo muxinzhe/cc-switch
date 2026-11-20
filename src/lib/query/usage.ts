@@ -1,9 +1,10 @@
 import {
-  keepPreviousData,
+  type QueryKey,
   useQuery,
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useUsageMachine } from "@/ssh/UsageMachine";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
@@ -19,6 +20,10 @@ type UsageQueryOptions = {
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
 };
+type UsageQuerySource = Pick<
+  NonNullable<ReturnType<typeof useUsageMachine>>,
+  "scopeKey" | "snapshotId" | "ready"
+>;
 
 type RequestLogsQueryArgs = {
   filters: LogFilters;
@@ -174,6 +179,26 @@ function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
   };
 }
 
+// Keep previous date/filter results within a machine scope while the next
+// result loads. In particular, never show another machine's data on switch.
+export function useScopedUsageQuery(source?: UsageQuerySource) {
+  const context = useUsageMachine();
+  const machine = source ?? context;
+  const scope = machine?.scopeKey;
+  return {
+    key: (key: QueryKey) =>
+      scope ? [...key, "ssh-scope", scope, machine?.snapshotId] : key,
+    enabled: machine?.ready ?? true,
+    args: (machine?.snapshotId ? [machine.snapshotId] : []) as [string] | [],
+    placeholder: <T>(data: T, previous?: { queryKey: QueryKey }) =>
+      (previous?.queryKey.at(-3) === "ssh-scope"
+        ? previous.queryKey.at(-2)
+        : undefined) === scope
+        ? data
+        : undefined,
+  };
+}
+
 // Hooks
 // 统计类查询都带 keepPreviousData：换筛选、时间范围、翻页时先留着上一份数据，
 // 新数据到了再换，不让指标闪成「…」、请求日志表塌成骨架。
@@ -183,13 +208,16 @@ export function useUsageSummary(
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.summary(
-      range.preset,
-      range.customStartDate,
-      range.customEndDate,
-      effective,
-      range.liveEndTime,
+    queryKey: machine.key(
+      usageKeys.summary(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        effective,
+        range.liveEndTime,
+      ),
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -199,9 +227,11 @@ export function useUsageSummary(
         effective.appType,
         effective.providerName,
         effective.model,
+        ...machine.args,
       );
     },
-    placeholderData: keepPreviousData,
+    enabled: machine.enabled && (options?.enabled ?? true),
+    placeholderData: machine.placeholder,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -210,15 +240,18 @@ export function useUsageSummary(
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
   filters?: Pick<UsageScopeFilters, "providerName" | "model">,
-  options?: UsageQueryOptions,
+  options?: UsageQueryOptions & { source?: UsageQuerySource },
 ) {
+  const machine = useScopedUsageQuery(options?.source);
   return useQuery({
-    queryKey: usageKeys.summaryByApp(
-      range.preset,
-      range.customStartDate,
-      range.customEndDate,
-      filters,
-      range.liveEndTime,
+    queryKey: machine.key(
+      usageKeys.summaryByApp(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        filters,
+        range.liveEndTime,
+      ),
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -227,9 +260,11 @@ export function useUsageSummaryByApp(
         endDate,
         filters?.providerName,
         filters?.model,
+        ...machine.args,
       );
     },
-    placeholderData: keepPreviousData,
+    enabled: machine.enabled && (options?.enabled ?? true),
+    placeholderData: machine.placeholder,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -241,13 +276,16 @@ export function useUsageTrends(
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.trends(
-      range.preset,
-      range.customStartDate,
-      range.customEndDate,
-      effective,
-      range.liveEndTime,
+    queryKey: machine.key(
+      usageKeys.trends(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        effective,
+        range.liveEndTime,
+      ),
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -257,10 +295,11 @@ export function useUsageTrends(
         effective.appType,
         effective.providerName,
         effective.model,
+        ...machine.args,
       );
     },
-    enabled: options?.enabled ?? true,
-    placeholderData: keepPreviousData,
+    enabled: machine.enabled && (options?.enabled ?? true),
+    placeholderData: machine.placeholder,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -272,15 +311,18 @@ export function useUsageFirstDate(
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.firstDate(effective),
+    queryKey: machine.key(usageKeys.firstDate(effective)),
     queryFn: () =>
       usageApi.getUsageFirstDate(
         effective.appType,
         effective.providerName,
         effective.model,
+        ...machine.args,
       ),
-    placeholderData: keepPreviousData,
+    enabled: machine.enabled && (options?.enabled ?? true),
+    placeholderData: machine.placeholder,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -292,13 +334,16 @@ export function useProviderStats(
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.providerStats(
-      range.preset,
-      range.customStartDate,
-      range.customEndDate,
-      effective,
-      range.liveEndTime,
+    queryKey: machine.key(
+      usageKeys.providerStats(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        effective,
+        range.liveEndTime,
+      ),
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -308,10 +353,11 @@ export function useProviderStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        ...machine.args,
       );
     },
-    placeholderData: keepPreviousData,
-    enabled: options?.enabled ?? true,
+    placeholderData: machine.placeholder,
+    enabled: machine.enabled && (options?.enabled ?? true),
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -323,13 +369,16 @@ export function useModelStats(
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.modelStats(
-      range.preset,
-      range.customStartDate,
-      range.customEndDate,
-      effective,
-      range.liveEndTime,
+    queryKey: machine.key(
+      usageKeys.modelStats(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        effective,
+        range.liveEndTime,
+      ),
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -339,10 +388,11 @@ export function useModelStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        ...machine.args,
       );
     },
-    placeholderData: keepPreviousData,
-    enabled: options?.enabled ?? true,
+    placeholderData: machine.placeholder,
+    enabled: machine.enabled && (options?.enabled ?? true),
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -366,24 +416,31 @@ export function useRequestLogs({
     statusCode: filters.statusCode,
   };
 
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.logs(key, page, pageSize),
+    queryKey: machine.key(usageKeys.logs(key, page, pageSize)),
     queryFn: () => {
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
-      return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
+      return usageApi.getRequestLogs(
+        effectiveFilters,
+        page,
+        pageSize,
+        ...machine.args,
+      );
     },
-    placeholderData: keepPreviousData,
-    enabled: options?.enabled ?? true,
+    placeholderData: machine.placeholder,
+    enabled: machine.enabled && (options?.enabled ?? true),
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
 
 export function useRequestDetail(requestId: string) {
+  const machine = useScopedUsageQuery();
   return useQuery({
-    queryKey: usageKeys.detail(requestId),
-    queryFn: () => usageApi.getRequestDetail(requestId),
-    enabled: !!requestId,
+    queryKey: machine.key(usageKeys.detail(requestId)),
+    queryFn: () => usageApi.getRequestDetail(requestId, ...machine.args),
+    enabled: machine.enabled && !!requestId,
   });
 }
 

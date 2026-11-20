@@ -17,6 +17,7 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveUsageRange, getUsageRangePresetLabel } from "@/lib/usageRange";
 import {
+  aggregateSummaries,
   fmtInt,
   formatHitRatePercent,
   formatTokensCompact,
@@ -31,6 +32,8 @@ import {
 } from "@/components/usage/UsageTrendChart";
 import type { DailyStats, UsageSummary } from "@/types/usage";
 import { cn } from "@/lib/utils";
+import { sshApi } from "@/ssh/api";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 const RANGES = ["today", "7d", "30d", "all"] as const;
 type Range = (typeof RANGES)[number];
@@ -72,26 +75,52 @@ interface UsageData {
   trends: DailyStats[];
   startDate: number;
   endDate: number;
+  failures: string[];
 }
 
 /** 「全部」从最早有记录的那天算起（按 0 起算后端会按天铺满几十年）。 */
 async function loadUsage(range: Range): Promise<UsageData> {
+  const hosts = await sshApi.hosts();
+  const { id, failures } = await sshApi.usageSnapshot(
+    hosts.filter((host) => host.enabled).map((host) => host.id),
+    true,
+  );
   const resolved = resolveUsageRange({ preset: range });
   let { startDate } = resolved;
   const { endDate } = resolved;
   if (range === "all") {
-    const first = await usageApi.getUsageFirstDate();
-    if (!first) return { summary: null, trends: [], startDate, endDate };
+    const first = await usageApi.getUsageFirstDate(
+      undefined,
+      undefined,
+      undefined,
+      id,
+    );
+    if (!first)
+      return { summary: null, trends: [], startDate, endDate, failures };
     const [y, m, d] = first.split("-").map(Number);
     startDate = Math.floor(new Date(y, m - 1, d).getTime() / 1000);
     // 不到一天时后端会按小时分桶，至少给满一天按天显示
     startDate = Math.min(startDate, endDate - DAY_SECONDS - 1);
   }
-  const [summary, trends] = await Promise.all([
-    usageApi.getUsageSummary(startDate, endDate),
-    usageApi.getUsageTrends(startDate, endDate),
+  const [apps, trends] = await Promise.all([
+    usageApi.getUsageSummaryByApp(
+      resolved.startDate,
+      endDate,
+      undefined,
+      undefined,
+      id,
+    ),
+    usageApi.getUsageTrends(
+      startDate,
+      endDate,
+      undefined,
+      undefined,
+      undefined,
+      id,
+    ),
   ]);
-  return { summary, trends, startDate, endDate };
+  const summary = aggregateSummaries(apps.map((app) => app.summary));
+  return { summary, trends, startDate, endDate, failures };
 }
 
 /** 相邻几根并成一根，标签用第一根的。 */
@@ -216,7 +245,7 @@ export function UsageTab({
     i18n.resolvedLanguage || i18n.language || "en",
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, error, isLoading } = useQuery({
     queryKey: ["tray-panel-usage", range, refreshKey],
     queryFn: () => loadUsage(range),
     enabled: visible,
@@ -275,14 +304,30 @@ export function UsageTab({
         }))}
       />
 
+      {data && data.failures.length > 0 && (
+        <p
+          role="status"
+          className="text-[11px] text-muted-foreground"
+          title={data.failures.join("\n")}
+        >
+          {t("ssh.partialUsage")}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-[11px] text-destructive">
+          {extractErrorMessage(error) || String(error)}
+        </p>
+      )}
       {!summary && isLoading ? (
         <div className="flex h-40 items-center justify-center text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
         </div>
       ) : !summary || summary.totalRequests === 0 ? (
-        <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
-          {t("usage.noData")}
-        </div>
+        !error && (
+          <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
+            {t("usage.noData")}
+          </div>
+        )
       ) : (
         <>
           {/* 上半：汇总四格，Tokens 的细分用小字写在格子里 */}

@@ -1,4 +1,5 @@
 pub mod agy_account;
+#[cfg(feature = "desktop")]
 pub mod auto_sync;
 pub mod backup_storage;
 pub mod balance;
@@ -25,6 +26,7 @@ pub mod prompt;
 pub mod provider;
 pub mod proxy;
 pub mod s3;
+#[cfg(feature = "desktop")]
 pub mod s3_auto_sync;
 pub mod s3_sync;
 pub mod session_usage;
@@ -47,6 +49,7 @@ pub mod usage_cache;
 pub(crate) mod usage_http;
 pub mod usage_stats;
 pub mod webdav;
+#[cfg(feature = "desktop")]
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
 

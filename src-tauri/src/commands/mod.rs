@@ -9,14 +9,17 @@ mod coding_plan;
 mod config;
 mod copilot;
 mod custom_icon;
+#[cfg(feature = "desktop")]
 mod deeplink;
 mod dsh;
 mod env;
 mod failover;
 mod global_proxy;
 mod hermes;
+#[cfg(feature = "desktop")]
 mod import_export;
 mod kimi_oauth;
+#[cfg(feature = "desktop")]
 mod mcp;
 mod misc;
 mod model_fetch;
@@ -24,24 +27,32 @@ mod omo;
 mod omp;
 mod openclaw;
 mod pi;
+#[cfg(feature = "desktop")]
 mod plugin;
 mod profile;
 mod prompt;
 mod provider;
 mod proxy;
+#[cfg(feature = "desktop")]
 mod session_manager;
 mod settings;
+#[cfg(feature = "desktop")]
 pub mod skill;
 mod stream_check;
 mod subscription;
+#[cfg(feature = "desktop")]
 mod sync_support;
 mod terminal_launch;
 mod xai_oauth;
 
+#[cfg(feature = "desktop")]
 mod s3_sync;
+#[cfg(feature = "desktop")]
 mod usage;
+#[cfg(feature = "desktop")]
 mod webdav_sync;
 mod workbuddy_account;
+#[cfg(feature = "desktop")]
 mod workspace;
 
 #[cfg(test)]
@@ -58,14 +69,17 @@ pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
 pub use custom_icon::*;
+#[cfg(feature = "desktop")]
 pub use deeplink::*;
 pub use dsh::*;
 pub use env::*;
 pub use failover::*;
 pub use global_proxy::*;
 pub use hermes::*;
+#[cfg(feature = "desktop")]
 pub use import_export::*;
 pub use kimi_oauth::*;
+#[cfg(feature = "desktop")]
 pub use mcp::*;
 pub use misc::*;
 pub use model_fetch::*;
@@ -73,23 +87,30 @@ pub use omo::*;
 pub(crate) use omp::*;
 pub use openclaw::*;
 pub(crate) use pi::*;
+#[cfg(feature = "desktop")]
 pub use plugin::*;
 pub use profile::*;
 pub use prompt::*;
 pub use provider::*;
 pub use proxy::*;
+#[cfg(feature = "desktop")]
 pub use session_manager::*;
 pub use settings::*;
+#[cfg(feature = "desktop")]
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
 pub use terminal_launch::*;
 pub use xai_oauth::*;
 
+#[cfg(feature = "desktop")]
 pub use s3_sync::*;
+#[cfg(feature = "desktop")]
 pub use usage::*;
+#[cfg(feature = "desktop")]
 pub use webdav_sync::*;
 pub use workbuddy_account::*;
+#[cfg(feature = "desktop")]
 pub use workspace::*;
 
 /// 同步命令在 Tauri 2 里跑在主线程上：要等数据库连接锁（或等切换锁，切换时要拿库）的

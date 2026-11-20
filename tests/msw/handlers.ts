@@ -175,6 +175,7 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
+  http.post(`${TAURI_ENDPOINT}/ssh_hosts`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/list_sessions`, () => success(listSessions())),
 
   http.post(`${TAURI_ENDPOINT}/sync_session_index`, () => {
@@ -465,6 +466,7 @@ export const handlers = [
   ),
 
   // 侧栏：今日花费、授权中心提醒；「应用」页：Claude Desktop 接入状态
+  http.post(`${TAURI_ENDPOINT}/get_usage_summary_by_app`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_usage_summary`, () =>
     success({
       totalRequests: 0,

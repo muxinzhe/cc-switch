@@ -124,7 +124,10 @@ export function SessionItem({
     ? getBaseName(session.projectDir)
     : t("sessionManager.unknownDirectory", { defaultValue: "未知目录" });
   const hasMeta =
-    showDir || Boolean(snippet || lastText) || archived || blocked;
+    showDir ||
+    Boolean(snippet || lastText || session.machineName) ||
+    archived ||
+    blocked;
   const appId = isSessionAppId(session.providerId) ? session.providerId : null;
 
   const tip = [
@@ -139,11 +142,13 @@ export function SessionItem({
     .filter(Boolean)
     .join("\n");
 
-  const deleteReason = !deletable
-    ? t(nativeDeleteHintKey(session) ?? "sessionManager.mcodeDeleteHint", {
-        defaultValue: "请在 MiniMax Code 中删除",
-      })
-    : null;
+  const deleteReason = session.machineId
+    ? t("ssh.readOnly")
+    : !deletable
+      ? t(nativeDeleteHintKey(session) ?? "sessionManager.mcodeDeleteHint", {
+          defaultValue: "请在 MiniMax Code 中删除",
+        })
+      : null;
 
   const row = (
     <div
@@ -229,6 +234,17 @@ export function SessionItem({
               showAppIcon && "ps-6",
             )}
           >
+            {session.machineName && (
+              <span
+                className="max-w-32 shrink-0 truncate"
+                title={session.machineName}
+              >
+                {session.machineName}
+                {(showDir || snippet || lastText) && (
+                  <span aria-hidden="true"> ·</span>
+                )}
+              </span>
+            )}
             {showDir && (
               <>
                 <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />

@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/machineIpc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { focusManager } from "@tanstack/react-query";
 

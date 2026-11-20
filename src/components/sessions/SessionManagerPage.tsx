@@ -59,6 +59,12 @@ import {
   sessionMenuItemClass,
 } from "./SessionItem";
 import { SessionReader } from "./reader/SessionReader";
+import {
+  MachineError,
+  MachinePicker,
+  useMachineScope,
+} from "@/ssh/MachineScope";
+import { useSshSessions } from "@/ssh/api";
 import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
 import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import {
@@ -142,6 +148,7 @@ const linkButton =
   "h-[22px] rounded-[4px] px-0.5 text-caption text-fg-1 underline decoration-border-strong underline-offset-[3px] hover:decoration-fg-2";
 
 interface SessionManagerPageProps {
+  initialMachine?: string;
   appId: string;
   /** 侧栏上当前的应用（从 Claude Desktop 进来时要提示一句） */
   fromApp?: AppId;
@@ -150,15 +157,25 @@ interface SessionManagerPageProps {
 }
 
 export function SessionManagerPage({
+  initialMachine,
   appId,
   fromApp,
   onOpenTerminalSettings,
 }: SessionManagerPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, dataUpdatedAt, isSuccess, isLoading, refetch } =
-    useSessionsQuery();
-  const sessions = useMemo(() => data ?? [], [data]);
+  const machines = useMachineScope(initialMachine);
+  const local = useSessionsQuery(machines.includeLocal);
+  const remote = useSshSessions(machines.remote);
+  const sessions = useMemo(
+    () => [
+      ...(machines.includeLocal ? (local.data ?? []) : []),
+      ...remote.sessions,
+    ],
+    [machines.includeLocal, local.data, remote.sessions],
+  );
+  const isLoading =
+    sessions.length === 0 && (local.isLoading || remote.pending);
   const { data: settings } = useSettingsQuery();
   const { updateSettings, autoSaveSettings } = useSettings();
   const contentSearchEnabled = settings?.sessionContentSearchEnabled ?? false;
@@ -213,7 +230,7 @@ export function SessionManagerPage({
   const piSessionDiscovery = useQuery({
     queryKey: piKeys.sessionDiscovery,
     queryFn: () => piApi.getSessionDiscovery(),
-    enabled: appFilter === "pi",
+    enabled: appFilter === "pi" && machines.includeLocal,
     staleTime: 30 * 1000,
   });
 
@@ -268,14 +285,18 @@ export function SessionManagerPage({
     isSearching: isSearchingContent,
   } = useSessionContentSearch({
     query,
-    enabled: contentSearchEnabled,
-    listIsSuccess: isSuccess,
-    listUpdatedAt: dataUpdatedAt,
+    enabled: contentSearchEnabled && machines.includeLocal,
+    listIsSuccess: local.isSuccess,
+    listUpdatedAt: local.dataUpdatedAt,
     providerIds: contentProviderIds,
   });
   const contentHitOf = useCallback(
     (session: SessionMeta) =>
-      contentHits.get(getContentHitKey(session.providerId, session.sourcePath)),
+      session.machineId
+        ? undefined
+        : contentHits.get(
+            getContentHitKey(session.providerId, session.sourcePath),
+          ),
     [contentHits],
   );
   const trimmedQuery = query.trim();
@@ -395,6 +416,7 @@ export function SessionManagerPage({
   const transcript = useSessionTranscript(
     readerSession?.providerId,
     readerSession?.sourcePath,
+    readerSession,
   );
 
   const deleteSessionMutation = useDeleteSessionMutation();
@@ -438,7 +460,7 @@ export function SessionManagerPage({
 
   const handleLaunch = async (session: SessionMeta) => {
     const command = session.resumeCommand;
-    if (!command) return;
+    if (session.machineId || !command) return;
     if (!terminalName) {
       handleCopy(
         command,
@@ -692,7 +714,11 @@ export function SessionManagerPage({
   };
 
   const refreshList = async () => {
-    await refetch();
+    const results = await Promise.all([
+      ...(machines.includeLocal ? [local.refetch()] : []),
+      remote.refetch(),
+    ]);
+    if (results.flat().some(({ isError }) => isError)) return;
     toast.success(
       t("sessionManager.listRefreshed", { defaultValue: "已刷新会话列表" }),
     );
@@ -941,6 +967,11 @@ export function SessionManagerPage({
               )}
             />
             <span className="shrink-0 whitespace-nowrap">{group.label}</span>
+            {group.machineName && (
+              <span className="max-w-40 shrink-0 truncate text-caption font-normal text-fg-2">
+                {group.machineName}
+              </span>
+            )}
             {fullPath && (
               <span className="flex min-w-0 whitespace-nowrap text-caption font-normal text-fg-3">
                 <span className="min-w-0 truncate">{pathHead}</span>
@@ -1219,7 +1250,8 @@ export function SessionManagerPage({
             readerSession && "hidden",
           )}
         >
-          <div className="flex shrink-0 items-center gap-2 px-6 pt-3.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 px-6 pt-3.5">
+            {machines.hosts.length > 0 && <MachinePicker {...machines} />}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -1485,6 +1517,17 @@ export function SessionManagerPage({
             </div>
           )}
 
+          {(machines.error || remote.failures.length > 0) && (
+            <div className="space-y-1 px-6 pt-3">
+              {machines.error && <MachineError error={machines.error} />}
+              {remote.failures.map(({ host, error }) => (
+                <div key={host.id}>
+                  <p className="text-caption text-fg-2">{host.name}</p>
+                  <MachineError error={error} />
+                </div>
+              ))}
+            </div>
+          )}
           {isLoading ? (
             <div className="flex flex-1 items-center justify-center text-body text-fg-2">
               {t("sessionManager.loadingSessions", {
