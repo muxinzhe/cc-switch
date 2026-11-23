@@ -1,0 +1,12 @@
+{
+  "version": "4.0.37",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "自动更新旧版 SSH 后端，修复升级后打不开供应商配置",
+      "zh-TW": "自動更新舊版 SSH 後端，修正升級後無法開啟供應商設定",
+      "en": "Replace stale SSH agents automatically so provider settings open after an upgrade",
+      "ja": "旧版の SSH エージェントを自動更新し、アップグレード後の設定エラーを修正"
+    }
+  ]
+}

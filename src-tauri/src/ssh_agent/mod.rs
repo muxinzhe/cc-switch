@@ -1,4 +1,5 @@
 mod commands;
+mod lifecycle;
 pub(crate) mod runtime;
 
 use std::{
@@ -61,13 +62,26 @@ pub fn run() -> Result<()> {
         ensure!(args.next().is_none(), "Unexpected SSH agent arguments");
         return sync_usage(&directory, &previous);
     }
+    if action == "--ensure" || action == "--call" {
+        let build = args.next();
+        ensure!(args.next().is_none(), "Unexpected SSH agent arguments");
+        let build = build
+            .as_deref()
+            .map(|value| value.to_str().context("Invalid SSH agent build identifier"))
+            .transpose()?;
+        if action == "--ensure" {
+            return lifecycle::ensure_running(
+                &directory,
+                build.context("Expected an SSH agent build identifier")?,
+            );
+        }
+        return call(&directory, build);
+    }
     ensure!(args.next().is_none(), "Unexpected SSH agent arguments");
     if action == "--serve" {
         serve(&directory)
-    } else if action == "--call" {
-        call(&directory)
     } else {
-        anyhow::bail!("Expected --serve or --call")
+        anyhow::bail!("Expected --serve, --ensure, or --call")
     }
 }
 
@@ -112,12 +126,7 @@ fn serve(directory: &Path) -> Result<()> {
     unsafe { libc::umask(0o077) };
     use std::os::fd::AsRawFd;
 
-    let lock = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(directory.join("rpc.lock"))?;
+    let lock = lifecycle::open_lock(directory, "rpc.lock")?;
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         anyhow::bail!("The SSH agent already has an active listener");
     }
@@ -225,12 +234,28 @@ fn handle(app: &AppHandle, socket: &mut UnixStream) -> Result<()> {
     Ok(())
 }
 
-fn call(directory: &Path) -> Result<()> {
-    let mut socket = UnixStream::connect(directory.join("rpc.sock"))?;
-    socket.set_read_timeout(Some(IO_TIMEOUT))?;
-    socket.set_write_timeout(Some(IO_TIMEOUT))?;
-    socket.write_all(&read_bounded(io::stdin().lock())?)?;
+fn exchange(socket: &mut UnixStream, input: &[u8], timeout: Duration) -> Result<Vec<u8>> {
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
+    socket.write_all(input)?;
     socket.shutdown(std::net::Shutdown::Write)?;
-    io::stdout().lock().write_all(&read_bounded(&mut socket)?)?;
+    read_bounded(socket)
+}
+
+fn call(directory: &Path, build: Option<&str>) -> Result<()> {
+    let input = read_bounded(io::stdin().lock())?;
+    let mut socket = match lifecycle::connect(directory)? {
+        Some(socket) => socket,
+        None => {
+            lifecycle::ensure_running(
+                directory,
+                build.context("SSH configuration backend is not running")?,
+            )?;
+            lifecycle::connect(directory)?.context("SSH configuration backend did not start")?
+        }
+    };
+    io::stdout()
+        .lock()
+        .write_all(&exchange(&mut socket, &input, IO_TIMEOUT)?)?;
     Ok(())
 }

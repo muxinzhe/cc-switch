@@ -12,7 +12,6 @@ use super::{
 include!(concat!(env!("OUT_DIR"), "/ssh_agent_assets.rs"));
 
 pub(super) const PROTOCOL: u16 = 1;
-const HELLO: &str = r#"{"protocol":1,"command":"hello"}"#;
 
 #[tauri::command]
 pub(crate) async fn ssh_provider_command(
@@ -36,11 +35,8 @@ impl RemoteCli {
         let script = self.agent_script(
             digest,
             r#"
-if [ ! -S "$service/rpc.sock" ]; then
-    start_agent
-fi
 printf '\ncc-switch-ssh-response\n'
-exec "$binary" --call "$service"
+exec "$binary" --call "$service" "$expected_digest"
 "#,
         );
         let input = serde_json::to_vec(&json!({
@@ -128,20 +124,12 @@ printf '\ncc-switch-ssh-response\nready\n'
         let start = self.agent_script(
             digest,
             r#"
-if ! agent_hello >/dev/null 2>&1; then
-    start_agent
-fi
+private_dir "$service"
 printf '\ncc-switch-ssh-response\n'
-agent_hello
+exec "$binary" --ensure "$service" "$expected_digest"
 "#,
         );
-        let status = run_ssh(self.endpoint(), &start, None, Duration::from_secs(40)).await?;
-        let reply: Value = serde_json::from_str(&status)?;
-        ensure!(
-            reply["data"]["protocol"] == PROTOCOL
-                && reply["data"]["version"] == env!("CARGO_PKG_VERSION"),
-            "The running SSH configuration backend is incompatible"
-        );
+        run_ssh(self.endpoint(), &start, None, Duration::from_secs(45)).await?;
         Ok(digest.clone())
     }
 
@@ -152,22 +140,6 @@ private_dir "$root"
 service="$root/provider-v{PROTOCOL}"
 binary="$root/provider-agent-{digest}"
 expected_digest="{digest}"
-agent_hello() {{
-    printf '%s' '{HELLO}' | "$binary" --call "$service"
-}}
-start_agent() {{
-    private_dir "$service"
-    CC_SWITCH_AGENT_BUILD="$expected_digest" nohup "$binary" --serve "$service" </dev/null >>"$service/startup.log" 2>&1 &
-    attempts=0
-    until agent_hello >/dev/null 2>&1; do
-        attempts=$((attempts+1))
-        if [ "$attempts" -ge 35 ]; then
-            printf '%s\n' 'The SSH configuration backend did not start.' >&2
-            exit 1
-        fi
-        sleep 1
-    done
-}}
 {operation}
 "#
         ))
