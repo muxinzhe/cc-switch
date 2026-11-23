@@ -1616,6 +1616,7 @@
     "reload": "Reload",
     "reloaded": "Session reloaded",
     "readFailed": "Couldn’t read this session",
+    "remoteReadInterrupted": "Remote session loading was interrupted. Previously loaded messages are still available.",
     "you": "You",
     "copyQuestion": "Copy this prompt",
     "copyReply": "Copy this reply",

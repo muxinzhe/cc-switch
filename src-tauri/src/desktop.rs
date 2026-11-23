@@ -1340,7 +1340,7 @@ pub fn run() {
             ssh::ssh_connect,
             ssh::ssh_sessions,
             ssh::usage::ssh_usage_snapshot,
-            ssh::ssh_session_messages,
+            ssh::ssh_stream_session_messages,
             ssh::ssh_providers,
             ssh::agent::ssh_provider_command,
             ssh::agent::ssh_open_provider_terminal,

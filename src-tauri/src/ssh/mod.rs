@@ -2,15 +2,20 @@ pub(crate) mod agent;
 mod cli;
 mod config;
 pub(crate) mod config_file;
+mod transcript;
 pub(crate) mod usage;
 
 use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{
+    ipc::{Channel, IpcResponse},
+    State,
+};
 use tokio::sync::{Mutex, OnceCell};
 
 use crate::config::{get_app_config_dir, read_json_file, write_json_file_private};
+use crate::session_manager::model::TranscriptChunk;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,17 +190,38 @@ pub(crate) async fn ssh_sessions(
 }
 
 #[tauri::command]
-pub(crate) async fn ssh_session_messages(
+pub(crate) async fn ssh_stream_session_messages(
     state: State<'_, Registry>,
     host_id: String,
     app: String,
     session_id: String,
-) -> Result<Vec<cli::Message>, String> {
-    remote(&state, &host_id)
-        .await?
-        .messages(&app, &session_id)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    on_chunk: Channel,
+) -> Result<(), String> {
+    // A batch only needs to stay borrowed through serialization.
+    let on_batch = on_chunk.clone();
+    let result = async {
+        remote(&state, &host_id)
+            .await?
+            .stream_messages(&app, &session_id, move |start, messages| {
+                on_batch
+                    .send(TranscriptChunk::Messages { start, messages }.body()?)
+                    .map_err(Into::into)
+            })
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+    .await;
+    let send =
+        |chunk: TranscriptChunk<'_>| on_chunk.send(chunk.body()?).map_err(anyhow::Error::from);
+    match result {
+        Ok(payload_bytes) => {
+            send(TranscriptChunk::Done { payload_bytes }).map_err(|e| e.to_string())
+        }
+        Err(message) => {
+            let _ = send(TranscriptChunk::Error { message: &message });
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]

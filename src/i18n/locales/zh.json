@@ -1616,6 +1616,7 @@
     "reload": "重新读取",
     "reloaded": "已重新读取这个会话",
     "readFailed": "无法读取这个会话",
+    "remoteReadInterrupted": "远端会话加载中断，已加载的消息仍可查看。",
     "you": "你",
     "copyQuestion": "复制这条提问",
     "copyReply": "复制这条回复",

@@ -129,43 +129,70 @@ export const loadTranscript = async (
   providerId: string,
   sourcePath: string,
   onProgress?: (state: TranscriptState) => void,
+): Promise<TranscriptState> =>
+  receiveTranscript(
+    (onChunk) => sessionsApi.streamMessages(providerId, sourcePath, onChunk),
+    onProgress,
+    () => loadTranscriptOnce(providerId, sourcePath),
+  );
+
+const receiveTranscript = async (
+  stream: (onChunk: (chunk: TranscriptChunk) => void) => Promise<void>,
+  onProgress?: (state: TranscriptState) => void,
+  loadOnce?: () => Promise<TranscriptState>,
 ): Promise<TranscriptState> => {
   let state = EMPTY_TRANSCRIPT;
   let received = false;
   let failure: unknown;
+  let accepting = true;
   let settle: () => void = () => {};
   const finished = new Promise<void>((resolve) => {
     settle = resolve;
   });
 
-  try {
-    await sessionsApi.streamMessages(providerId, sourcePath, (chunk) => {
-      received = true;
-      try {
-        state = applyTranscriptChunk(state, chunk);
-      } catch (error) {
-        failure = error;
-        settle();
-        return;
-      }
-      onProgress?.(state);
-      if (state.done) settle();
-    });
-  } catch (error) {
-    if (!received) return loadTranscriptOnce(providerId, sourcePath);
-    throw error;
-  }
-
   let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    finished,
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, TRANSCRIPT_DONE_GRACE_MS);
-    }),
-  ]);
-  clearTimeout(timer);
-  if (failure) throw failure;
-  return { ...state, done: true };
+  try {
+    let rejection: { error: unknown } | undefined;
+    try {
+      await stream((chunk) => {
+        if (!accepting) return;
+        received = true;
+        try {
+          state = applyTranscriptChunk(state, chunk);
+        } catch (error) {
+          failure = error;
+          settle();
+          return;
+        }
+        onProgress?.(state);
+        if (state.done) settle();
+      });
+    } catch (error) {
+      if (loadOnce) {
+        if (!received) return loadOnce();
+        throw error;
+      }
+      // SSH delivers an error chunk after the messages already sent. IPC can
+      // reject the command before that chunk and the last messages arrive.
+      rejection = { error };
+    }
+
+    await Promise.race([
+      finished,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, TRANSCRIPT_DONE_GRACE_MS);
+      }),
+    ]);
+    if (failure) throw failure;
+    if (rejection) throw rejection.error;
+    if (!state.done && !loadOnce) {
+      throw new Error("SSH transcript transfer ended before completion");
+    }
+    return { ...state, done: true };
+  } finally {
+    accepting = false;
+    clearTimeout(timer);
+  }
 };
 
 export interface SessionTranscriptResult {
@@ -202,18 +229,22 @@ export const useSessionTranscript = (
   const query = useQuery<TranscriptState>({
     queryKey,
     queryFn: async () => {
-      if (machineId) {
-        return {
-          header: null,
-          messages: await sshApi.messages(machineId, remoteSession),
-          done: true,
-        };
-      }
       const previous = queryClient.getQueryData<TranscriptState>(queryKey);
       const live = !previous?.done;
-      return loadTranscript(providerId!, sourcePath!, (state) => {
+      const onProgress = (state: TranscriptState) => {
         if (live) queryClient.setQueryData(queryKey, state);
-      });
+      };
+      if (machineId) {
+        return receiveTranscript(
+          (onChunk) => sshApi.streamMessages(machineId, remoteSession, onChunk),
+          (state) => {
+            if (state.messages.length >= (previous?.messages.length ?? 0)) {
+              onProgress(state);
+            }
+          },
+        );
+      }
+      return loadTranscript(providerId!, sourcePath!, onProgress);
     },
     enabled: Boolean(providerId && (sourcePath || machineId)),
     staleTime: 30 * 1000,

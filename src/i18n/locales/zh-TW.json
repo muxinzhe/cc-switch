@@ -1616,6 +1616,7 @@
     "reload": "重新讀取",
     "reloaded": "已重新讀取這個工作階段",
     "readFailed": "無法讀取這個工作階段",
+    "remoteReadInterrupted": "遠端工作階段載入中斷，仍可查看已載入的訊息。",
     "you": "你",
     "copyQuestion": "複製這則提問",
     "copyReply": "複製這則回覆",

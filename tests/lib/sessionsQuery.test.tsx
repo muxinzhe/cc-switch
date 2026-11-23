@@ -35,6 +35,7 @@ import {
   useSessionTranscript,
 } from "@/lib/query/sessions";
 import { useSessionMessagesQuery as legacyExport } from "@/lib/query";
+import { sshApi } from "@/ssh/api";
 
 const message = (content: string, turnId = "t1"): SessionMessage => ({
   role: "user",
@@ -180,6 +181,71 @@ describe("loadTranscript", () => {
 });
 
 describe("useSessionTranscript", () => {
+  it("opens a remote transcript before completion and retains messages if the transfer fails", async () => {
+    let push: (chunk: TranscriptChunk) => void = () => {};
+    let fail: (error: Error) => void = () => {};
+    const stream = vi.spyOn(sshApi, "streamMessages").mockImplementation(
+      (_host, _session, onChunk) =>
+        new Promise<void>((_resolve, reject) => {
+          push = onChunk;
+          fail = reject;
+        }),
+    );
+    try {
+      const session = {
+        providerId: "codex",
+        sessionId: "remote-session",
+        machineId: "host",
+      };
+      const { result } = renderHook(
+        () => useSessionTranscript("codex", undefined, session),
+        { wrapper: wrapperWith(newClient()) },
+      );
+      await waitFor(() => expect(stream).toHaveBeenCalled());
+      act(() => {
+        push({ type: "messages", start: 0, messages: [message("first")] });
+      });
+      await waitFor(() => expect(result.current.messages).toHaveLength(1));
+      expect(result.current.isStreaming).toBe(true);
+
+      await act(async () => {
+        fail(new Error("lost connection"));
+        await Promise.resolve();
+        push({
+          type: "messages",
+          start: 1,
+          messages: [message("last received")],
+        });
+        push({ type: "error", message: "lost connection" });
+      });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(result.current.messages.map(({ content }) => content)).toEqual([
+        "first",
+        "last received",
+      ]);
+
+      stream.mockImplementation(async (_host, _session, onChunk) => {
+        onChunk({
+          type: "messages",
+          start: 0,
+          messages: [message("first"), message("rest")],
+        });
+        onChunk({ type: "done", payloadBytes: 2 });
+      });
+      await act(async () => {
+        await result.current.refetch();
+      });
+      await waitFor(() => expect(result.current.isError).toBe(false));
+      expect(result.current.isStreaming).toBe(false);
+      expect(result.current.messages.map(({ content }) => content)).toEqual([
+        "first",
+        "rest",
+      ]);
+    } finally {
+      stream.mockRestore();
+    }
+  });
+
   it("首包到达即有数据，Done 后结束流式状态", async () => {
     let push: (chunk: TranscriptChunk) => void = () => {};
     let finish: () => void = () => {};

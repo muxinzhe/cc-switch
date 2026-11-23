@@ -1,14 +1,16 @@
-use std::{io::Read, process::Stdio, sync::Arc, time::Duration};
+use std::{future::Future, io::Read, process::Stdio, sync::Arc, time::Duration};
 
-use super::Endpoint;
+use super::{transcript, Endpoint};
+use crate::session_manager::model::SessionMessage;
 use anyhow::{bail, ensure, Context, Result};
 use flate2::read::GzDecoder;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    process::Command,
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{ChildStdout, Command},
 };
+use tokio_util::io::SyncIoBridge;
 
 // Pin the GitHub release and both digests. Only this reviewed, non-interactive
 // CLI is run from the private installation, never a binary found on remote PATH.
@@ -16,7 +18,8 @@ const RELEASE: &str = "5.11.4";
 const BASE_URL: &str = "https://github.com/SaladDay/cc-switch-cli/releases/download";
 const MAX_BINARY: usize = 64 * 1024 * 1024;
 const MAX_RESPONSE: usize = 32 * 1024 * 1024;
-const RESPONSE_PREFIX: &str = "cc-switch-ssh-response\n";
+const RESPONSE_MARKER: &[u8] = b"\ncc-switch-ssh-response\n";
+const STDERR_TAIL: usize = 64 * 1024;
 
 struct Asset {
     arch: &'static str,
@@ -82,14 +85,6 @@ pub(crate) struct Session {
     project_dir: Option<String>,
     created_at: Option<i64>,
     last_active_at: Option<i64>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Message {
-    role: String,
-    content: String,
-    ts: Option<i64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -214,10 +209,10 @@ printf '\ncc-switch-ssh-response\n'
     pub(crate) async fn sessions(&self) -> Result<Vec<Session>> {
         // The upstream Sessions commands bypass startup migrations of live
         // configuration. Their caches are explicitly limited to our directory.
-        let response = self
-            .read_only("exec \"$binary\" sessions list --all --json")
-            .await?;
-        Deserialize::deserialize(response).context("Invalid session list from CC Switch CLI")
+        self.read_session_data("exec \"$binary\" sessions list --all --json", |reader| {
+            serde_json::from_reader(reader).context("Invalid session list from CC Switch CLI")
+        })
+        .await
     }
 
     pub(super) async fn usage_rows(&self, scan: bool) -> Result<super::usage::Rows> {
@@ -263,22 +258,20 @@ CC_SWITCH_USAGE"#,
         Deserialize::deserialize(data).context("Invalid usage records from SSH host")
     }
 
-    pub(crate) async fn messages(&self, app: &str, session_id: &str) -> Result<Vec<Message>> {
+    pub(crate) async fn stream_messages(
+        &self,
+        app: &str,
+        session_id: &str,
+        send: impl FnMut(usize, &[SessionMessage]) -> Result<()> + Send + 'static,
+    ) -> Result<u64> {
         ensure!(supported_app(app), "Unsupported remote session application");
         let app = shlex::try_quote(app)?;
         let id = shlex::try_quote(session_id)?;
-        let response = self
-            .read_only(&format!(
-                "exec \"$binary\" sessions messages --provider {app} --json -- {id}"
-            ))
-            .await?;
-        #[derive(Deserialize)]
-        struct Transcript {
-            messages: Vec<Message>,
-        }
-        Ok(Transcript::deserialize(response)
-            .context("Invalid remote transcript")?
-            .messages)
+        self.read_session_data(
+            &format!("exec \"$binary\" sessions messages --provider {app} --json -- {id}"),
+            move |reader| transcript::read(reader, send),
+        )
+        .await
     }
 
     pub(crate) async fn providers(&self, app: &str) -> Result<Vec<Provider>> {
@@ -336,7 +329,28 @@ exec python3 -c {} {operation} {} "$root"
     }
 
     async fn read_only(&self, body: &str) -> Result<serde_json::Value> {
-        let script = self.script(&format!(
+        let script = self.read_only_script(body);
+        let response = run_ssh(&self.host, &script, None, Duration::from_secs(300)).await?;
+        serde_json::from_str(&response).context("Invalid JSON from SSH host")
+    }
+
+    async fn read_session_data<T: Send + 'static>(
+        &self,
+        body: &str,
+        read: impl FnOnce(SessionReader) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        run_ssh_with(
+            &self.host,
+            &self.read_only_script(body),
+            None,
+            Duration::from_secs(300),
+            |stdout| parse_session_data(stdout, read),
+        )
+        .await
+    }
+
+    fn read_only_script(&self, body: &str) -> String {
+        self.script(&format!(
             r#"private_dir "$root"
 if ! verified_binary "$binary"; then
     printf '%s\n' 'The managed CLI is unavailable. Reconnect to the host.' >&2
@@ -349,9 +363,7 @@ unset CC_SWITCH_TEST_HOME
 printf '\ncc-switch-ssh-response\n'
 {body}
 "#
-        ));
-        let response = run_ssh(&self.host, &script, None, Duration::from_secs(300)).await?;
-        serde_json::from_str(&response).context("Invalid JSON from SSH host")
+        ))
     }
 
     pub(super) fn script(&self, body: &str) -> String {
@@ -477,6 +489,41 @@ pub(super) async fn run_ssh(
     upload: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<String> {
+    run_ssh_with(host, script, upload, timeout, |stdout| async {
+        let mut response = Vec::new();
+        stdout
+            .take(MAX_RESPONSE as u64 + 1)
+            .read_to_end(&mut response)
+            .await?;
+        ensure!(
+            response.len() <= MAX_RESPONSE,
+            "SSH response exceeds size limit"
+        );
+        String::from_utf8(response).context("SSH host returned invalid UTF-8")
+    })
+    .await
+}
+
+type SessionReader = std::io::BufReader<SyncIoBridge<BufReader<ChildStdout>>>;
+
+async fn parse_session_data<T: Send + 'static>(
+    stdout: BufReader<ChildStdout>,
+    read: impl FnOnce(SessionReader) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let bridge = SyncIoBridge::new(stdout);
+    tokio::task::spawn_blocking(move || read(std::io::BufReader::new(bridge))).await?
+}
+
+async fn run_ssh_with<T, F>(
+    host: &Endpoint,
+    script: &str,
+    upload: Option<&[u8]>,
+    timeout: Duration,
+    read: impl FnOnce(BufReader<ChildStdout>) -> F,
+) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
     let remote = format!("exec /bin/sh -c {}", shlex::try_quote(script)?);
     let mut command = Command::new("ssh");
     command.args([
@@ -508,8 +555,20 @@ pub(super) async fn run_ssh(
     if let Some(identity) = &host.identity_file {
         command.args(["-i", identity, "-o", "IdentitiesOnly=yes"]);
     }
+    command.args(["--", &host.destination, &remote]);
+    run_command(command, upload, timeout, read).await
+}
+
+async fn run_command<T, F>(
+    mut command: Command,
+    upload: Option<&[u8]>,
+    timeout: Duration,
+    read: impl FnOnce(BufReader<ChildStdout>) -> F,
+) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
     command
-        .args(["--", &host.destination, &remote])
         .stdin(if upload.is_some() {
             Stdio::piped()
         } else {
@@ -525,6 +584,16 @@ pub(super) async fn run_ssh(
     let stdin = child.stdin.take();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
+    let response = async {
+        let mut stdout = BufReader::new(stdout);
+        // Keep the read error until the process exits so a remote command failure
+        // can still report its stderr, including when it prints no response marker.
+        let response = match skip_banner(&mut stdout).await {
+            Ok(()) => read(stdout).await,
+            Err(error) => Err(error),
+        };
+        Ok::<_, anyhow::Error>(response)
+    };
     let send = async {
         if let (Some(mut input), Some(bytes)) = (stdin, upload) {
             // A rejected upload can close stdin early. Preserve the server's
@@ -540,8 +609,8 @@ pub(super) async fn run_ssh(
     let (status, out, err, ()) = tokio::time::timeout(timeout, async {
         tokio::try_join!(
             async { Ok::<_, anyhow::Error>(child.wait().await?) },
-            read_bounded(stdout, MAX_RESPONSE),
-            read_bounded(stderr, 64 * 1024),
+            response,
+            read_stderr_tail(stderr),
             send,
         )
     })
@@ -555,21 +624,48 @@ pub(super) async fn run_ssh(
         }
         bail!("{}", error.trim());
     }
-    let out = String::from_utf8(out).context("SSH host returned invalid UTF-8")?;
-    // A login shell may print a banner before the command starts.
-    let (_, value) = out
-        .split_once(&format!("\n{RESPONSE_PREFIX}"))
-        .context("SSH host did not return a CC Switch response")?;
-    Ok(value.into())
+    out
 }
-async fn read_bounded(input: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-    input
-        .take(limit as u64 + 1)
-        .read_to_end(&mut output)
-        .await?;
-    ensure!(output.len() <= limit, "SSH response exceeds size limit");
-    Ok(output)
+
+async fn skip_banner(input: &mut (impl AsyncBufRead + Unpin)) -> Result<()> {
+    let mut matched = 0;
+    loop {
+        let bytes = input.fill_buf().await?;
+        ensure!(
+            !bytes.is_empty(),
+            "SSH host did not return a CC Switch response"
+        );
+        let mut consumed = bytes.len();
+        for (index, &byte) in bytes.iter().enumerate() {
+            if byte == RESPONSE_MARKER[matched] {
+                matched += 1;
+                if matched == RESPONSE_MARKER.len() {
+                    consumed = index + 1;
+                    break;
+                }
+            } else {
+                matched = usize::from(byte == RESPONSE_MARKER[0]);
+            }
+        }
+        input.consume(consumed);
+        if matched == RESPONSE_MARKER.len() {
+            return Ok(());
+        }
+    }
+}
+
+async fn read_stderr_tail(mut input: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
+    let mut tail = Vec::with_capacity(STDERR_TAIL);
+    let mut chunk = [0; 8192];
+    loop {
+        let len = input.read(&mut chunk).await?;
+        if len == 0 {
+            return Ok(tail);
+        }
+        let excess = (tail.len() + len).saturating_sub(STDERR_TAIL);
+        tail.drain(..excess);
+        tail.extend_from_slice(&chunk[..len]);
+    }
 }
 
 #[cfg(test)]
@@ -580,6 +676,90 @@ mod tests {
     fn rejects_cli_archives_with_unexpected_digest() {
         let error = extract_binary(b"not a release", &X64).unwrap_err();
         assert!(error.to_string().contains("archive checksum"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn streams_large_transcript_with_a_banner_and_noisy_stderr() {
+        use std::io::Write;
+
+        let mut fixture = tempfile::NamedTempFile::new().unwrap();
+        let large_message = "界".repeat(110_000);
+        let count = MAX_RESPONSE / large_message.len() + 2;
+        write!(fixture, r#"{{"provider":"codex","messages":["#).unwrap();
+        for index in 0..count {
+            if index > 0 {
+                write!(fixture, ",").unwrap();
+            }
+            serde_json::to_writer(
+                &mut fixture,
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": &large_message,
+                    "ts": index,
+                }),
+            )
+            .unwrap();
+        }
+        write!(fixture, "]}}").unwrap();
+        assert!(fixture.as_file().metadata().unwrap().len() > MAX_RESPONSE as u64);
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                concat!(
+                    r#"head -c 90000 "$1" >&2; printf 'login banner\ncc-switch-ssh-response\n';"#,
+                    r#"exec cat "$1""#,
+                ),
+                "ssh-fixture",
+            ])
+            .arg(fixture.path());
+        let actual = run_command(command, None, Duration::from_secs(30), |stdout| {
+            parse_session_data(stdout, move |reader| {
+                let mut read = 0;
+                transcript::read(reader, |start, messages| {
+                    assert_eq!(start, read);
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].content, large_message);
+                    assert_eq!(messages[0].ts, Some(read as i64));
+                    read += messages.len();
+                    Ok(())
+                })?;
+                Ok(read)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(actual, count);
+    }
+
+    #[tokio::test]
+    async fn skips_banner_and_preserves_response_across_buffer_boundaries() {
+        let mut raw = vec![b'x'; 8193];
+        raw.extend_from_slice(b"\ncc-switch-ssh-respo");
+        raw.extend_from_slice(RESPONSE_MARKER);
+        raw.extend_from_slice(b"response");
+        let mut reader = BufReader::with_capacity(7, raw.as_slice());
+        skip_banner(&mut reader).await.unwrap();
+        let mut response = String::new();
+        reader.read_to_string(&mut response).await.unwrap();
+        assert_eq!(response, "response");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn noisy_failed_command_still_reports_the_remote_error() {
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "head -c 90000 /dev/zero >&2; printf '\\nTranscript missing\\n' >&2; exit 1",
+        ]);
+        let error = run_command(command, None, Duration::from_secs(10), |_| async { Ok(()) })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().ends_with("Transcript missing"));
+        assert!(error.to_string().len() <= STDERR_TAIL);
     }
 
     #[tokio::test]
@@ -642,7 +822,7 @@ mod tests {
             .iter()
             .find(|session| session.provider_id == "codex")
         {
-            cli.messages("codex", &session.session_id)
+            cli.stream_messages("codex", &session.session_id, |_, _| Ok(()))
                 .await
                 .expect("read a Codex transcript");
         }

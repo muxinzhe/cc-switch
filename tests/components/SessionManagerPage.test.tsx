@@ -276,10 +276,20 @@ describe("SessionManagerPage", () => {
         createdAt: Date.now() - HOUR,
       },
     ]);
-    const messages = vi.spyOn(sshApi, "messages").mockResolvedValue([
-      { role: "user", content: "Message from SSH" },
-      { role: "assistant", content: "Reply from SSH" },
-    ]);
+    const messages = vi
+      .spyOn(sshApi, "streamMessages")
+      .mockImplementation(async (_host, _session, onChunk) => {
+        onChunk({
+          type: "messages",
+          start: 0,
+          messages: [
+            { role: "user", content: "Message from SSH" },
+            { role: "assistant", content: "Reply from SSH" },
+          ],
+        });
+        onChunk({ type: "error", message: "SSH connection interrupted" });
+        throw new Error("SSH connection interrupted");
+      });
     localStorage.setItem(
       EXPANDED_KEY,
       JSON.stringify([
@@ -313,12 +323,19 @@ describe("SessionManagerPage", () => {
     expect(
       await screen.findByText("Reply from SSH", { selector: "p" }),
     ).toBeInTheDocument();
+    expect(
+      await screen.findByText("SSH connection interrupted"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Reply from SSH", { selector: "p" }),
+    ).toBeInTheDocument();
     expect(messages).toHaveBeenCalledWith(
       "host-a",
       expect.objectContaining({
         sessionId: "codex-session-1",
         sourcePath: undefined,
       }),
+      expect.any(Function),
     );
   });
 

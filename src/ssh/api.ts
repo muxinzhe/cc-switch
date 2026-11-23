@@ -1,6 +1,6 @@
-import { invoke } from "@/lib/machineIpc";
+import { Channel, invoke } from "@/lib/machineIpc";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type { SessionMeta } from "@/types";
+import type { SessionMeta, TranscriptChunk } from "@/types";
 
 export interface SshHost {
   id: string;
@@ -40,12 +40,6 @@ interface RemoteConfigFile extends LocalConfigFile {
   exists: boolean;
 }
 
-export interface RemoteMessage {
-  role: string;
-  content: string;
-  ts?: number;
-}
-
 export const sshKeys = {
   all: ["ssh"] as const,
   hosts: ["ssh", "hosts"] as const,
@@ -60,12 +54,20 @@ export const sshApi = {
   connect: (hostId: string) => invoke("ssh_connect", { hostId }),
   sessions: (hostId: string) =>
     invoke<SessionMeta[]>("ssh_sessions", { hostId }),
-  messages: (hostId: string, session: SessionMeta) =>
-    invoke<RemoteMessage[]>("ssh_session_messages", {
+  streamMessages: (
+    hostId: string,
+    session: SessionMeta,
+    onChunk: (chunk: TranscriptChunk) => void,
+  ) => {
+    const channel = new Channel<TranscriptChunk>();
+    channel.onmessage = onChunk;
+    return invoke<void>("ssh_stream_session_messages", {
       hostId,
       app: session.providerId,
       sessionId: session.sessionId,
-    }),
+      onChunk: channel,
+    });
+  },
   usageSnapshot: (
     hostIds: string[],
     includeLocal: boolean,

@@ -217,7 +217,13 @@ export function SessionReader({
     () => getAgentReaderStyle(session.providerId),
     [session.providerId],
   );
-  const failed = transcript.isError;
+  const remoteReadInterrupted =
+    Boolean(session.machineId) &&
+    transcript.isError &&
+    transcript.messages.length > 0;
+  const failed = transcript.isError && !remoteReadInterrupted;
+  const readError =
+    extractErrorMessage(transcript.error) || String(transcript.error);
 
   // 流式数据每到一批就重建 turn；交给低优先级渲染，滚动和点击不被打断
   const messages = useDeferredValue(transcript.messages);
@@ -654,7 +660,7 @@ export function SessionReader({
           {t("sessionManager.readFailed", { defaultValue: "无法读取这个会话" })}
         </p>
         <code className="max-w-[560px] whitespace-pre-wrap rounded-[8px] bg-subtle px-2.5 py-1.5 text-left font-mono text-caption text-fg-2 [overflow-wrap:anywhere]">
-          {extractErrorMessage(transcript.error) || String(transcript.error)}
+          {readError}
         </code>
         <div className="mt-2 flex gap-2">
           <Button variant="neutral" size="regular" onClick={onReload}>
@@ -811,6 +817,19 @@ export function SessionReader({
           onStepFind={stepFind}
           onExportMarkdown={exportMarkdownFile}
         />
+        {remoteReadInterrupted && (
+          <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-2">
+            <div className="min-w-0 text-caption" role="status">
+              <p>{t("sessionManager.remoteReadInterrupted")}</p>
+              <p className="truncate text-fg-2" title={readError}>
+                {readError}
+              </p>
+            </div>
+            <Button variant="neutral" size="regular" onClick={onReload}>
+              {t("common.retry", { defaultValue: "重试" })}
+            </Button>
+          </div>
+        )}
         <div className="flex min-h-0 flex-1">
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {body}
