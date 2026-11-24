@@ -3,11 +3,11 @@ use std::{fmt, io::Read};
 use anyhow::{Context, Result};
 use serde::{
     de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
-    Deserialize, Deserializer,
+    Deserializer,
 };
 
 use crate::session_manager::{
-    cache::{CHUNK_MAX_BYTES, CHUNK_MAX_MESSAGES},
+    cache::{serialized_message_len, CHUNK_MAX_BYTES, CHUNK_MAX_MESSAGES},
     model::SessionMessage,
 };
 
@@ -64,13 +64,6 @@ where
     }
 }
 
-#[derive(Deserialize)]
-struct RemoteMessage {
-    role: String,
-    content: String,
-    ts: Option<i64>,
-}
-
 impl<'de, F> Visitor<'de> for Messages<F>
 where
     F: FnMut(usize, &[SessionMessage]) -> Result<()>,
@@ -86,20 +79,15 @@ where
         let mut start = 0;
         let mut batch_bytes = 0;
         let mut total_bytes = 0;
-        while let Some(msg) = seq.next_element::<RemoteMessage>()? {
-            let size = msg.content.len() + msg.role.len() + 48;
+        while let Some(msg) = seq.next_element::<SessionMessage>()? {
+            let size = serialized_message_len(&msg);
             if !batch.is_empty() && batch_bytes + size > CHUNK_MAX_BYTES {
                 (self.0)(start, &batch).map_err(de::Error::custom)?;
                 start += batch.len();
                 batch.clear();
                 batch_bytes = 0;
             }
-            batch.push(SessionMessage {
-                role: msg.role,
-                content: msg.content,
-                ts: msg.ts,
-                ..SessionMessage::default()
-            });
+            batch.push(msg);
             batch_bytes += size;
             total_bytes += size as u64;
             // Show the first message immediately, then batch to reduce IPC traffic.
@@ -114,5 +102,44 @@ where
             (self.0)(start, &batch).map_err(de::Error::custom)?;
         }
         Ok(total_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session_manager::model::SessionBlock;
+
+    #[test]
+    fn streams_rich_messages_in_bounded_batches_without_losing_wire_fields() {
+        let mut expected: Vec<SessionMessage> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/sessions/claude.messages.json"
+        ))
+        .unwrap();
+        let large = "界".repeat(CHUNK_MAX_BYTES / 3 + 1);
+        expected.insert(
+            1,
+            SessionMessage::from_blocks("user", None, vec![SessionBlock::text(large)]),
+        );
+        let wire = serde_json::to_vec(&serde_json::json!({ "messages": expected })).unwrap();
+        let mut received = Vec::new();
+        let size = read(wire.as_slice(), |start, batch| {
+            assert_eq!(start, received.len());
+            assert!(
+                batch.len() == 1
+                    || batch.iter().map(serialized_message_len).sum::<usize>() <= CHUNK_MAX_BYTES
+            );
+            received.extend_from_slice(batch);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            size,
+            expected.iter().map(serialized_message_len).sum::<usize>() as u64
+        );
+        assert_eq!(
+            serde_json::to_value(received).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
     }
 }

@@ -1,7 +1,8 @@
 pub(crate) mod agent;
-mod cli;
 mod config;
 pub(crate) mod config_file;
+mod connection;
+pub(crate) mod session_content;
 mod transcript;
 pub(crate) mod usage;
 
@@ -73,7 +74,7 @@ pub(crate) struct HostInput {
 }
 
 #[derive(Default)]
-pub(crate) struct Registry(Mutex<HashMap<String, Arc<OnceCell<cli::RemoteCli>>>>);
+pub(crate) struct Registry(Mutex<HashMap<String, Arc<OnceCell<connection::RemoteAgent>>>>);
 
 fn load() -> Result<Vec<Host>, String> {
     let path = get_app_config_dir().join("ssh-hosts.json");
@@ -152,7 +153,7 @@ pub(crate) async fn ssh_remove_host(state: State<'_, Registry>, id: String) -> R
     Ok(())
 }
 
-async fn remote(state: &Registry, host_id: &str) -> Result<cli::RemoteCli, String> {
+async fn remote(state: &Registry, host_id: &str) -> Result<connection::RemoteAgent, String> {
     let (endpoint, connection) = {
         let mut connections = state.0.lock().await;
         let host = load()?
@@ -163,7 +164,7 @@ async fn remote(state: &Registry, host_id: &str) -> Result<cli::RemoteCli, Strin
         (host.endpoint, connection)
     };
     connection
-        .get_or_try_init(|| cli::RemoteCli::connect(endpoint))
+        .get_or_try_init(|| connection::RemoteAgent::connect(endpoint))
         .await
         .cloned()
         .map_err(|e| format!("{e:#}"))
@@ -173,7 +174,7 @@ async fn remote(state: &Registry, host_id: &str) -> Result<cli::RemoteCli, Strin
 pub(crate) async fn ssh_connect(
     state: State<'_, Registry>,
     host_id: String,
-) -> Result<cli::HostInfo, String> {
+) -> Result<connection::HostInfo, String> {
     Ok(remote(&state, &host_id).await?.info())
 }
 
@@ -181,7 +182,7 @@ pub(crate) async fn ssh_connect(
 pub(crate) async fn ssh_sessions(
     state: State<'_, Registry>,
     host_id: String,
-) -> Result<Vec<cli::Session>, String> {
+) -> Result<Vec<crate::session_manager::SessionMeta>, String> {
     remote(&state, &host_id)
         .await?
         .sessions()
@@ -194,7 +195,7 @@ pub(crate) async fn ssh_stream_session_messages(
     state: State<'_, Registry>,
     host_id: String,
     app: String,
-    session_id: String,
+    source_path: String,
     on_chunk: Channel,
 ) -> Result<(), String> {
     // A batch only needs to stay borrowed through serialization.
@@ -202,7 +203,7 @@ pub(crate) async fn ssh_stream_session_messages(
     let result = async {
         remote(&state, &host_id)
             .await?
-            .stream_messages(&app, &session_id, move |start, messages| {
+            .stream_messages(&app, &source_path, move |start, messages| {
                 on_batch
                     .send(TranscriptChunk::Messages { start, messages }.body()?)
                     .map_err(Into::into)
@@ -222,17 +223,4 @@ pub(crate) async fn ssh_stream_session_messages(
             Err(message)
         }
     }
-}
-
-#[tauri::command]
-pub(crate) async fn ssh_providers(
-    state: State<'_, Registry>,
-    host_id: String,
-    app: String,
-) -> Result<Vec<cli::Provider>, String> {
-    remote(&state, &host_id)
-        .await?
-        .providers(&app)
-        .await
-        .map_err(|e| format!("{e:#}"))
 }

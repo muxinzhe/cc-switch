@@ -1,3 +1,4 @@
+import { useReaderContext } from "./context";
 import { invoke } from "@/lib/machineIpc";
 import { FileText, FolderOpen } from "lucide-react";
 import { memo, useCallback, type ReactNode } from "react";
@@ -84,6 +85,7 @@ export const PathChip = memo(function PathChip({
   className,
 }: PathChipProps) {
   const { t } = useTranslation();
+  const { machineId } = useReaderContext();
   const localPath = fileUrlToPath(path);
   const display = shortenPath(localPath, projectDir);
 
@@ -145,7 +147,7 @@ export const PathChip = memo(function PathChip({
             (searchQuery ? highlightText(display, searchQuery) : display)}
         </span>
       </button>
-      {canReveal && (
+      {canReveal && !machineId && (
         <HoverTip content={revealLabel}>
           <button
             type="button"

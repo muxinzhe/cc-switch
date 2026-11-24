@@ -38,14 +38,24 @@ fn write_agent_assets() {
 
     const ASSET_DIR: &str = "CC_SWITCH_SSH_AGENT_ASSETS";
     println!("cargo:rerun-if-env-changed={ASSET_DIR}");
-    let assets = env::var_os(ASSET_DIR).map(PathBuf::from);
+    let assets = env::var_os(ASSET_DIR)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ssh-agent-assets")
+        });
     let mut generated = String::new();
-    for (name, arch) in [("X86_64", "x86_64"), ("AARCH64", "aarch64")] {
-        let file = assets
-            .as_ref()
-            .map(|dir| dir.join(format!("cc-switch-ssh-agent-{arch}")));
-        let contents = file.filter(|path| path.is_file()).map(|path| {
-            println!("cargo:rerun-if-changed={}", path.display());
+    for (name, platform) in [
+        ("X86_64", "x86_64"),
+        ("AARCH64", "aarch64"),
+        ("DARWIN_ARM64", "darwin-arm64"),
+    ] {
+        let file = assets.join(format!("cc-switch-ssh-agent-{platform}"));
+        println!("cargo:rerun-if-changed={}", file.display());
+        if env::var("PROFILE").as_deref() == Ok("release") && !file.is_file() {
+            panic!("Missing {}. Provide the bundled SSH agents in {ASSET_DIR} or build them with scripts/build-ssh-agent.sh.", file.display());
+        }
+        let contents = file.is_file().then(|| {
+            let path = file;
             let path = fs::canonicalize(path).expect("Locate the SSH agent asset");
             format!("Some(include_bytes!({:?}))", path.to_string_lossy())
         });

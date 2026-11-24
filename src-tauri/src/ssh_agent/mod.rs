@@ -1,16 +1,21 @@
 mod commands;
 mod lifecycle;
 pub(crate) mod runtime;
+mod sessions;
+mod usage;
 
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::{self, Read, Write},
     os::unix::{
-        fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+        fs::{FileTypeExt, MetadataExt},
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -23,12 +28,14 @@ use crate::{AppState, Database};
 use runtime::{async_runtime, AppHandle};
 
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
-const IO_TIMEOUT: Duration = Duration::from_secs(120);
-const PROTOCOL: u16 = 1;
+const IO_TIMEOUT: Duration = Duration::from_secs(300);
+use crate::SSH_AGENT_PROTOCOL as PROTOCOL;
 
 #[derive(Deserialize)]
 struct Request {
     protocol: u16,
+    #[serde(default)]
+    build: String,
     command: String,
     #[serde(default)]
     args: Map<String, Value>,
@@ -57,11 +64,6 @@ pub fn run() -> Result<()> {
         "The SSH agent directory must be owned by the SSH user with mode 0700"
     );
 
-    if action == "--sync-usage" {
-        let previous = PathBuf::from(args.next().context("Expected the previous usage cache")?);
-        ensure!(args.next().is_none(), "Unexpected SSH agent arguments");
-        return sync_usage(&directory, &previous);
-    }
     if action == "--ensure" || action == "--call" {
         let build = args.next();
         ensure!(args.next().is_none(), "Unexpected SSH agent arguments");
@@ -85,43 +87,6 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn sync_usage(directory: &Path, previous: &Path) -> Result<()> {
-    use rusqlite::{backup::Backup, Connection, OpenFlags};
-    use std::os::fd::AsRawFd;
-
-    unsafe { libc::umask(0o077) };
-    let lock = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(directory.join("scan.lock"))?;
-    ensure!(
-        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0,
-        "Could not lock the usage cache"
-    );
-
-    let database = directory.join("cc-switch.db");
-    if !database.exists() && previous.is_file() {
-        let staging = directory.join("usage-import.db");
-        {
-            let source = Connection::open_with_flags(previous, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-            let mut target = Connection::open(&staging)?;
-            Backup::new(&source, &mut target)?.run_to_completion(
-                128,
-                Duration::from_millis(10),
-                None,
-            )?;
-        }
-        fs::rename(staging, database)?;
-    }
-    crate::app_store::update_cached_override(Some(directory.to_owned()));
-    let database = Database::init()?;
-    let result = crate::services::session_usage::sync_all_unlocked(&database);
-    println!("{}", serde_json::to_string(&result)?);
-    Ok(())
-}
-
 fn serve(directory: &Path) -> Result<()> {
     unsafe { libc::umask(0o077) };
     use std::os::fd::AsRawFd;
@@ -139,14 +104,30 @@ fn serve(directory: &Path) -> Result<()> {
         fs::remove_file(&socket)?;
     }
 
-    let app = initialize(directory.join("data"))?;
-    let listener = UnixListener::bind(socket)?;
+    let app = initialize(directory.to_owned())?;
+    let commands = Arc::new(Mutex::new(()));
+    let retiring = Arc::new(AtomicBool::new(false));
+    let listener = UnixListener::bind(&socket)?;
     for stream in listener.incoming() {
         let mut stream = stream?;
-        let result = handle(&app, &mut stream);
-        if let Err(error) = result {
-            log::debug!("SSH config RPC connection ended: {error}");
+        if retiring.load(Ordering::Acquire) {
+            break;
         }
+        let retiring = retiring.clone();
+        let socket = socket.clone();
+        let app = app.clone();
+        let commands = commands.clone();
+        std::thread::spawn(move || {
+            match handle(&app, &commands, &mut stream) {
+                Ok(true) => {
+                    retiring.store(true, Ordering::Release);
+                    // Wake the accept loop so it drops the listener and its lock.
+                    let _ = UnixStream::connect(socket);
+                }
+                Ok(false) => {}
+                Err(error) => log::debug!("SSH agent connection ended: {error}"),
+            }
+        });
     }
     Ok(())
 }
@@ -156,6 +137,7 @@ fn initialize(data: PathBuf) -> Result<AppHandle> {
     crate::app_store::update_cached_override(Some(data.clone()));
     let had_database = data.join("cc-switch.db").is_file();
     let db = Arc::new(Database::init()?);
+    crate::settings::initialize_agent_settings(db.clone())?;
     let first_start = db.init_default_official_providers()? > 0;
     let proxy = db.get_global_proxy_url()?;
     crate::proxy::http_client::init(proxy.as_deref()).map_err(anyhow::Error::msg)?;
@@ -170,9 +152,11 @@ fn initialize(data: PathBuf) -> Result<AppHandle> {
             crate::AppType::Codex,
             crate::AppType::Gemini,
         ] {
-            // Use the same startup importer as desktop. This reads live files
-            // and registers their settings in the private agent database.
-            if let Err(error) = crate::ProviderService::import_default_config(&state, application) {
+            if let Err(error) = crate::services::provider::import_default_config_with_codex_seed(
+                &state,
+                application,
+                !had_database,
+            ) {
                 log::debug!(
                     "No importable native provider: {}",
                     crate::error_for_log(&error.to_string())
@@ -213,49 +197,130 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn handle(app: &AppHandle, socket: &mut UnixStream) -> Result<()> {
+// A one-byte status precedes the JSON response. Large transcripts and usage
+// snapshots flow directly from the serializer to SSH without an RPC size cap.
+fn handle(app: &AppHandle, commands: &Mutex<()>, socket: &mut UnixStream) -> Result<bool> {
     socket.set_read_timeout(Some(IO_TIMEOUT))?;
     socket.set_write_timeout(Some(IO_TIMEOUT))?;
-    let input = read_bounded(&mut *socket)?;
-    let reply = match serde_json::from_slice::<Request>(&input) {
-        Ok(value) if value.protocol == PROTOCOL => {
-            async_runtime::block_on(commands::dispatch(app.clone(), value))
+    let mut output = io::BufWriter::new(socket.try_clone()?);
+    let mut started = false;
+    let mut retire = false;
+    fn send<T: serde::Serialize>(out: &mut impl Write, started: &mut bool, data: &T) -> Result<()> {
+        *started = true;
+        out.write_all(&[0])?;
+        serde_json::to_writer(out, data)?;
+        Ok(())
+    }
+    let response = (|| -> Result<()> {
+        let request: Request = serde_json::from_slice(&read_bounded(socket)?)?;
+        ensure!(
+            request.protocol == PROTOCOL,
+            "Incompatible SSH agent protocol"
+        );
+        if request.command == "retire" {
+            lifecycle::check_upgrade_lock(&crate::config::get_app_config_dir())?;
+            retire = true;
+            return send(&mut output, &mut started, &true);
         }
-        Ok(_) => Err(json!("Incompatible SSH configuration protocol")),
-        Err(_) => Err(json!("Invalid SSH configuration request")),
-    };
-    let events = app.take_events();
-    let output = match reply {
-        Ok(data) => json!({"data": data, "events": events}),
-        Err(error) => json!({"error": error, "events": events}),
-    };
-    serde_json::to_writer(&mut *socket, &output)?;
-    socket.flush()?;
-    Ok(())
+        if request.command != "hello" || !request.build.is_empty() {
+            ensure!(
+                std::env::var("CC_SWITCH_AGENT_BUILD").ok().as_deref()
+                    == Some(request.build.as_str()),
+                "SSH agent build changed. Reconnect to this host."
+            );
+        }
+        match request.command.as_str() {
+            "sessions" => send(&mut output, &mut started, &sessions::list()),
+            "messages" => {
+                let app = request
+                    .args
+                    .get("app")
+                    .and_then(Value::as_str)
+                    .context("Missing session app")?;
+                let source = request
+                    .args
+                    .get("sourcePath")
+                    .and_then(Value::as_str)
+                    .context("Missing session source")?;
+                send(&mut output, &mut started, &sessions::messages(app, source)?)
+            }
+            "usage" => {
+                use runtime::Manager;
+                let scan = request
+                    .args
+                    .get("scan")
+                    .and_then(Value::as_bool)
+                    .context("Missing usage scan flag")?;
+                let rows = usage::snapshot(&app.state::<AppState>().db, scan)?;
+                send(&mut output, &mut started, &rows)
+            }
+            "hello" => {
+                let data = json!({"protocol": PROTOCOL, "version": env!("CARGO_PKG_VERSION"), "build": std::env::var("CC_SWITCH_AGENT_BUILD").ok()});
+                send(
+                    &mut output,
+                    &mut started,
+                    &json!({"data": data, "events": []}),
+                )
+            }
+            _ => {
+                // Each configuration request owns the events emitted by its handlers.
+                let _guard = commands
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("SSH agent command lock failed"))?;
+                let reply = async_runtime::block_on(commands::dispatch(app.clone(), request));
+                let events = app.take_events();
+                let value = match reply {
+                    Ok(data) => json!({"data": data, "events": events}),
+                    Err(error) => json!({"error": error, "events": events}),
+                };
+                send(&mut output, &mut started, &value)
+            }
+        }
+    })();
+    if let Err(error) = response {
+        if started {
+            return Err(error);
+        }
+        output.write_all(&[1])?;
+        write!(output, "{error:#}")?;
+    }
+    output.flush()?;
+    Ok(retire)
 }
 
-fn exchange(socket: &mut UnixStream, input: &[u8], timeout: Duration) -> Result<Vec<u8>> {
+fn exchange(
+    socket: &mut UnixStream,
+    input: &[u8],
+    timeout: Duration,
+    output: &mut impl Write,
+) -> Result<()> {
     socket.set_read_timeout(Some(timeout))?;
     socket.set_write_timeout(Some(timeout))?;
     socket.write_all(input)?;
     socket.shutdown(std::net::Shutdown::Write)?;
-    read_bounded(socket)
+    let mut status = [0];
+    socket.read_exact(&mut status)?;
+    if status[0] != 0 {
+        anyhow::bail!("{}", String::from_utf8_lossy(&read_bounded(socket)?));
+    }
+    io::copy(socket, output)?;
+    Ok(())
 }
 
 fn call(directory: &Path, build: Option<&str>) -> Result<()> {
     let input = read_bounded(io::stdin().lock())?;
-    let mut socket = match lifecycle::connect(directory)? {
-        Some(socket) => socket,
-        None => {
-            lifecycle::ensure_running(
-                directory,
-                build.context("SSH configuration backend is not running")?,
-            )?;
-            lifecycle::connect(directory)?.context("SSH configuration backend did not start")?
+    // An upgrade takes the exclusive lock. Let current commands finish writing
+    // native configuration and committing their SQLite transactions first.
+    use std::os::fd::AsRawFd;
+    loop {
+        let lock = lifecycle::open_lock(directory, "upgrade.lock")?;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) } != 0 {
+            return Err(io::Error::last_os_error()).context("Locking the SSH agent");
         }
-    };
-    io::stdout()
-        .lock()
-        .write_all(&exchange(&mut socket, &input, IO_TIMEOUT)?)?;
-    Ok(())
+        if let Some(mut socket) = lifecycle::connect(directory)? {
+            return exchange(&mut socket, &input, IO_TIMEOUT, &mut io::stdout().lock());
+        }
+        drop(lock);
+        lifecycle::ensure_running(directory, build.context("Missing SSH agent build")?)?;
+    }
 }

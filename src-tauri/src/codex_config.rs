@@ -3289,6 +3289,67 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// Whether the native ChatGPT login is being used on the built-in route.
+/// Unselected provider tables and profiles can contain unrelated endpoints.
+pub(crate) fn codex_live_uses_official_login(settings: &Value) -> bool {
+    let Some(auth) = settings.get("auth").and_then(Value::as_object) else {
+        return false;
+    };
+    if !matches!(
+        codex_auth_resolved_mode(auth),
+        CodexResolvedAuthMode::Chatgpt | CodexResolvedAuthMode::ChatgptAuthTokens
+    ) || !codex_auth_has_openai_account_material(&settings["auth"])
+    {
+        return false;
+    }
+    let Some(doc) = settings["config"]
+        .as_str()
+        .and_then(|text| text.parse::<DocumentMut>().ok())
+    else {
+        return false;
+    };
+    let profile = doc
+        .get("profile")
+        .and_then(|item| item.as_str())
+        .and_then(|name| doc.get("profiles")?.get(name));
+    let effective = |key: &str| profile.and_then(|p| p.get(key)).or_else(|| doc.get(key));
+    let value = |key: &str| {
+        effective(key)
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .trim()
+    };
+    if !value("experimental_bearer_token").is_empty() {
+        return false;
+    }
+    if ["openai_base_url", "chatgpt_base_url", "base_url"]
+        .into_iter()
+        .any(|key| {
+            !matches!(
+                value(key).trim_end_matches('/'),
+                "" | "https://api.openai.com/v1"
+                    | "https://chatgpt.com/backend-api"
+                    | crate::proxy::providers::CHATGPT_CODEX_BASE_URL
+            )
+        })
+    {
+        return false;
+    }
+    let active = effective("model_provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("openai");
+    let table = doc
+        .get("model_providers")
+        .and_then(|providers| providers.get(active));
+    match active {
+        "openai" => table.is_none(),
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID => table
+            .and_then(|item| item.as_table())
+            .is_some_and(table_matches_codex_unified_official_provider),
+        _ => false,
+    }
+}
+
 /// Whether a live Codex config is the official route projected by an older CC Switch
 /// (`model_provider = "cc-switch-official"`).
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {

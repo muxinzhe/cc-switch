@@ -56,11 +56,12 @@ export const SessionImage = memo(function SessionImage({
   className,
 }: SessionImageProps) {
   const rt = useReaderT();
-  const { providerId, sourcePath, projectDir } = useReaderContext();
+  const { providerId, sourcePath, projectDir, machineId } = useReaderContext();
   const [ref, near] = useNearViewport();
   const [open, setOpen] = useState(false);
   const { url, error } = useSessionImage(providerId, sourcePath, image, {
     enabled: near,
+    machineId,
   });
 
   const sizeClass =

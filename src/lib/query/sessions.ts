@@ -224,6 +224,7 @@ export const useSessionTranscript = (
         "messages",
         providerId,
         remoteSession.sessionId,
+        sourcePath,
       ]
     : sessionKeys.transcript(providerId, sourcePath);
   const query = useQuery<TranscriptState>({
@@ -246,7 +247,7 @@ export const useSessionTranscript = (
       }
       return loadTranscript(providerId!, sourcePath!, onProgress);
     },
-    enabled: Boolean(providerId && (sourcePath || machineId)),
+    enabled: Boolean(providerId && sourcePath),
     staleTime: 30 * 1000,
   });
   const data = query.data ?? EMPTY_TRANSCRIPT;
@@ -290,15 +291,25 @@ export const useBlockContent = (
   providerId: string | undefined,
   sourcePath: string | undefined,
   ref: ContentRef | undefined,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; machineId?: string } = {},
 ): BlockContentResult => {
   const query = useInfiniteQuery({
-    queryKey: sessionKeys.blockContent(providerId, sourcePath, ref),
-    queryFn: ({ pageParam }) =>
-      sessionsApi.getBlockContent(providerId!, sourcePath!, ref!, {
-        offset: pageParam,
-        limit: BLOCK_PAGE_CHARS,
-      }),
+    queryKey: [
+      ...(options.machineId ? sshKeys.host(options.machineId) : []),
+      ...sessionKeys.blockContent(providerId, sourcePath, ref),
+    ],
+    queryFn: ({ pageParam }) => {
+      const page = { offset: pageParam, limit: BLOCK_PAGE_CHARS };
+      return options.machineId
+        ? sshApi.getBlockContent(
+            options.machineId,
+            providerId!,
+            sourcePath!,
+            ref!,
+            page,
+          )
+        : sessionsApi.getBlockContent(providerId!, sourcePath!, ref!, page);
+    },
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((sum, page) => sum + page.text.length, 0);
@@ -371,11 +382,14 @@ const loadImageUrl = (
   providerId: string,
   sourcePath: string,
   image: ImageRef,
+  machineId?: string,
 ) => {
   let pending = imageLoads.get(key);
   if (!pending) {
-    pending = sessionsApi
-      .getImage(providerId, sourcePath, image)
+    const imageBytes = machineId
+      ? sshApi.getImage(machineId, providerId, sourcePath, image)
+      : sessionsApi.getImage(providerId, sourcePath, image);
+    pending = imageBytes
       .then((bytes) => {
         const url = URL.createObjectURL(
           new Blob([bytes], { type: image.mediaType }),
@@ -427,11 +441,13 @@ export const useSessionImage = (
   providerId: string | undefined,
   sourcePath: string | undefined,
   image: ImageRef | undefined,
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; machineId?: string } = {},
 ): SessionImageResult => {
   const enabled =
     Boolean(providerId && sourcePath && image) && options.enabled !== false;
-  const key = image ? `${providerId}|${sourcePath}|${stableKey(image)}` : "";
+  const key = image
+    ? stableKey([options.machineId ?? null, providerId, sourcePath, image])
+    : "";
   const [state, setState] = useState<SessionImageResult>({
     url: null,
     isLoading: false,
@@ -452,7 +468,13 @@ export const useSessionImage = (
     } else {
       setState({ url: null, isLoading: true, error: null });
       startWaiting(key);
-      loadImageUrl(key, providerId!, sourcePath!, image!).then(
+      loadImageUrl(
+        key,
+        providerId!,
+        sourcePath!,
+        image!,
+        options.machineId,
+      ).then(
         () => {
           stopWaiting(key);
           // 已卸载就不占用；不再等它了，补一次淘汰以免超出上限

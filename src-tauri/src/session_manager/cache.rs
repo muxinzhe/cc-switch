@@ -49,7 +49,7 @@ impl Transcript {
 
 // Count the actual wire representation (including escaped strings and omitted
 // content) without allocating and discarding another full JSON message.
-fn serialized_message_len(message: &SessionMessage) -> usize {
+pub(crate) fn serialized_message_len(message: &SessionMessage) -> usize {
     #[derive(Default)]
     struct ByteCounter(usize);
     impl io::Write for ByteCounter {

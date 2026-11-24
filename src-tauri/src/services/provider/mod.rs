@@ -58,6 +58,8 @@ pub(crate) use claude_editor::{switch_drops as claude_switch_drops, SwitchDrops}
 pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
+#[cfg(not(feature = "desktop"))]
+pub(crate) use live::import_default_config_with_codex_seed;
 pub(crate) use live::{
     imports_default_config, initialize_dsh_profiles, provider_exists_in_live_config,
     sync_additive_app_to_live, write_live_for_state, LiveSyncOutcome,

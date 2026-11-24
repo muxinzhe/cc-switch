@@ -1,13 +1,12 @@
 use std::{
     collections::VecDeque,
     path::Path,
-    process::Command,
     sync::{Arc, Mutex},
 };
 
 use anyhow::{ensure, Context, Result};
 use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, Transaction};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
 
@@ -17,22 +16,8 @@ use crate::{
     store::AppState,
 };
 
-pub(super) const LOG_COLUMNS: &str = "request_id,provider_id,app_type,model,request_model,pricing_model,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,input_token_semantics,input_cost_usd,output_cost_usd,cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,first_token_ms,duration_ms,status_code,error_message,session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source";
-pub(super) const ROLLUP_COLUMNS: &str = "provider_id,date,app_type,model,request_model,pricing_model,request_count,success_count,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,input_token_semantics,total_cost_usd,avg_latency_ms";
-
-#[derive(Deserialize)]
-pub(super) struct Rows {
-    logs: Vec<Vec<Value>>,
-    rollups: Vec<Vec<Value>>,
-    #[serde(default)]
-    codex_providers: Vec<(String, String)>,
-}
-
-#[derive(Deserialize)]
-struct CodexAttributions {
-    requests: Vec<(String, String, i64, String)>,
-    providers: Vec<(String, String)>,
-}
+pub(super) use crate::ssh_usage::Rows;
+use crate::ssh_usage::{attribution, LOG_COLUMNS, ROLLUP_COLUMNS};
 
 type Snapshot = (String, Arc<Database>);
 
@@ -162,20 +147,18 @@ pub(super) fn create_snapshot(
         let path = lock_conn!(local.conn).path().map(str::to_owned);
         if let Some(path) = path.filter(|path| !path.is_empty()) {
             let codex_home = crate::codex_config::get_codex_config_dir();
-            match read_local_attributions(Path::new(&path), &codex_home) {
-                Ok(Some(matches)) => apply_local_attributions(&tx, matches)?,
-                Ok(None) => {}
-                Err(error) => log::warn!("Could not attribute local Codex usage: {error:#}"),
+            if let Err(error) = apply_local_attributions(&tx, Path::new(&path), &codex_home) {
+                log::warn!("Could not attribute local Codex usage: {error:#}");
             }
         }
     }
     for (machine, rows) in machines {
         let mut insert_provider = tx.prepare(
             "INSERT INTO providers (id, app_type, name, settings_config)
-             VALUES (?1, 'codex', ?2, '{}')",
+             VALUES (?1, ?2, ?3, '{}')",
         )?;
-        for (id, name) in rows.codex_providers {
-            insert_provider.execute(rusqlite::params![format!("ssh:{machine}:{id}"), name])?;
+        for (id, app, name) in rows.providers {
+            insert_provider.execute(params![format!("ssh:{machine}:{id}"), app, name])?;
         }
         append(
             &tx,
@@ -195,8 +178,7 @@ pub(super) fn create_snapshot(
         )?;
     }
     tx.commit()?;
-    // The remote CLI can have an older pricing catalog. Use desktop prices to
-    // fill gaps before any aggregate or per-request query sees the snapshot.
+    // Fill price gaps using the desktop catalog before aggregating the imported rows.
     Database::backfill_missing_usage_costs_on_conn(&conn, None)?;
     Ok(Database {
         conn: Mutex::new(conn),
@@ -204,58 +186,37 @@ pub(super) fn create_snapshot(
     })
 }
 
-fn read_local_attributions(
+fn apply_local_attributions(
+    tx: &Transaction<'_>,
     database: &Path,
     codex_home: &Path,
-) -> Result<Option<CodexAttributions>> {
-    if !codex_home.join("logs_2.sqlite").is_file()
-        && !database
-            .with_file_name("codex-usage-attribution.db")
-            .is_file()
-    {
-        return Ok(None);
+) -> Result<()> {
+    let cache_path = database.with_file_name("codex-usage-attribution.db");
+    if !codex_home.join("logs_2.sqlite").is_file() && !cache_path.is_file() {
+        return Ok(());
     }
+    // Local snapshots keep their existing private cache. Remote agents use the
+    // same attribution code against their single provider/usage database.
+    let mut cache = Connection::open(cache_path)?;
+    attribution::init_cache(&cache)?;
+    let evidence = attribution::Evidence::load(tx, &cache)?;
+    let discovered = evidence.resolve(codex_home);
+    let writes = cache.transaction()?;
+    attribution::store(&writes, &discovered)?;
+    writes.commit()?;
 
-    let mut command = Command::new("python3");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    let output = command
-        .args([
-            "-I",
-            "-c",
-            include_str!("usage_snapshot.py"),
-            "--attributions",
-        ])
-        .arg(database)
-        .arg(codex_home)
-        .output()
-        .context("Starting the Codex attribution script with Python 3")?;
-    ensure!(
-        output.status.success(),
-        "Codex attribution script returned {}",
-        output.status
-    );
-    Ok(Some(serde_json::from_slice(&output.stdout)?))
-}
-
-fn apply_local_attributions(tx: &Transaction<'_>, matches: CodexAttributions) -> Result<()> {
     let mut insert_provider = tx.prepare(
         "INSERT OR IGNORE INTO providers (id, app_type, name, settings_config)
          VALUES (?1, 'codex', ?2, '{}')",
     )?;
-    for (id, name) in matches.providers {
-        insert_provider.execute(params![id, name])?;
-    }
     let mut update = tx.prepare(
         "UPDATE proxy_request_logs SET provider_id = ?4
          WHERE request_id = ?1 AND session_id = ?2 AND created_at = ?3
          AND app_type = 'codex' AND data_source = 'codex_session' AND provider_id = '_codex_session'",
     )?;
-    for (request, session, stamp, provider) in matches.requests {
-        update.execute(params![request, session, stamp, provider])?;
+    for (key, provider) in evidence.cached.into_iter().chain(discovered) {
+        insert_provider.execute(params![provider.id, provider.name])?;
+        update.execute(params![key.request, key.session, key.stamp, provider.id])?;
     }
     Ok(())
 }
@@ -315,6 +276,7 @@ fn append(
                     Value::Number(value) => value
                         .as_i64()
                         .map(SqlValue::Integer)
+                        .or_else(|| value.as_f64().map(SqlValue::Real))
                         .context("Invalid remote usage number"),
                     _ => anyhow::bail!("Invalid remote usage field"),
                 }
@@ -399,7 +361,7 @@ mod tests {
                             session_usage("unknown", "zz-model-without-a-price", "0", "1"),
                         ],
                         rollups: vec![],
-                        codex_providers: vec![],
+                        providers: vec![],
                     },
                 )],
             )?;
@@ -449,7 +411,11 @@ mod tests {
                         session_usage("unknown", "gpt-6.2-astra", "0", "1"),
                     ],
                     rollups: vec![],
-                    codex_providers: vec![("relay".to_owned(), "Remote Relay".to_owned())],
+                    providers: vec![(
+                        "relay".to_owned(),
+                        "codex".to_owned(),
+                        "Remote Relay".to_owned(),
+                    )],
                 },
             )],
         )?;

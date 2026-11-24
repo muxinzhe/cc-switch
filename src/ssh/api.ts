@@ -1,6 +1,12 @@
 import { Channel, invoke } from "@/lib/machineIpc";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type { SessionMeta, TranscriptChunk } from "@/types";
+import type {
+  ContentRef,
+  ImageRef,
+  SessionMeta,
+  TranscriptChunk,
+} from "@/types";
+import type { BlockContent, BlockContentPage } from "@/lib/api/sessions";
 
 export interface SshHost {
   id: string;
@@ -12,13 +18,6 @@ export interface SshHost {
 }
 
 export type HostInput = Omit<SshHost, "id"> & { id?: string };
-
-export interface RemoteProvider {
-  id: string;
-  name: string;
-  active: boolean;
-  live: boolean;
-}
 
 export type ConfigFileKey =
   | "claude"
@@ -64,10 +63,36 @@ export const sshApi = {
     return invoke<void>("ssh_stream_session_messages", {
       hostId,
       app: session.providerId,
-      sessionId: session.sessionId,
+      sourcePath: session.sourcePath,
       onChunk: channel,
     });
   },
+  getBlockContent: (
+    hostId: string,
+    app: string,
+    sourcePath: string,
+    contentRef: ContentRef,
+    page: BlockContentPage,
+  ) =>
+    invoke<BlockContent>("ssh_session_block_content", {
+      hostId,
+      app,
+      sourcePath,
+      contentRef,
+      ...page,
+    }),
+  getImage: (
+    hostId: string,
+    app: string,
+    sourcePath: string,
+    image: ImageRef,
+  ) =>
+    invoke<ArrayBuffer>("ssh_session_image", {
+      hostId,
+      app,
+      sourcePath,
+      image,
+    }),
   usageSnapshot: (
     hostIds: string[],
     includeLocal: boolean,
@@ -92,8 +117,6 @@ export const sshApi = {
       key,
       draft,
     }),
-  providers: (hostId: string, app: string) =>
-    invoke<RemoteProvider[]>("ssh_providers", { hostId, app }),
 };
 
 export function useSshHosts(enabled = true) {
@@ -140,7 +163,6 @@ export function useSshSessions(hosts: SshHost[]) {
         (data ?? []).map(
           (session): SessionMeta => ({
             ...session,
-            sourcePath: undefined,
             resumeCommand: undefined,
             machineId: hosts[index].id,
             machineName: hosts[index].name,

@@ -1095,6 +1095,15 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// Returns `Ok(true)` if a provider was actually imported,
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    import_default_config_with_codex_seed(state, app_type, false)
+}
+
+/// A new SSH database already contains the official preset when it reads the native files.
+pub(crate) fn import_default_config_with_codex_seed(
+    state: &AppState,
+    app_type: AppType,
+    use_codex_seed: bool,
+) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import.
     // Copilot 例外：自带模型卡是累加式，官方登录卡仍从 settings.json 导入。
@@ -1234,8 +1243,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         settings_config,
         None,
     );
-    provider.category = Some(
-        if matches!(app_type, AppType::Codex) {
+    let official_codex = match app_type {
+        AppType::Codex if use_codex_seed => {
+            crate::codex_config::codex_live_uses_official_login(&provider.settings_config)
+        }
+        AppType::Codex => {
             let config_text = provider
                 .settings_config
                 .get("config")
@@ -1250,12 +1262,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 .get("auth")
                 .is_some_and(crate::codex_config::codex_auth_has_login_material);
 
-            if has_login_material && !has_provider_key {
-                "official"
-            } else {
-                "custom"
-            }
-        } else if matches!(app_type, AppType::Agy | AppType::Copilot) {
+            has_login_material && !has_provider_key
+        }
+        _ => false,
+    };
+    provider.category = Some(
+        if official_codex || matches!(app_type, AppType::Agy | AppType::Copilot) {
             // Key 只在进程环境里，从不落盘：从 live 导入的一定是客户端自己的登录。
             "official"
         } else {
@@ -1271,11 +1283,20 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         provider.website_url = Some("https://github.com/features/copilot/cli".to_string());
     }
 
-    state.db.save_provider(&app_type, &provider)?;
+    let current_id = if use_codex_seed && official_codex {
+        let id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        state
+            .db
+            .update_provider_settings_config(&app_type, id, &provider.settings_config)?;
+        id
+    } else {
+        state.db.save_provider(&app_type, &provider)?;
+        provider.id.as_str()
+    };
     // Copilot 是累加式，没有直连指针：「默认」看 Copilot 自己的 settings.json。
     if !app_type.spec().additive {
-        state.db.set_current_provider(&app_type, &provider.id)?;
-        crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+        state.db.set_current_provider(&app_type, current_id)?;
+        crate::settings::set_current_provider(&app_type, Some(current_id))?;
     }
 
     // 初次导入已有配置时随手补出官方入口，对齐其它应用"首启动 = 导入 default

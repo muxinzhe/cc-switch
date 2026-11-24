@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "desktop"), allow(dead_code, unused_imports))]
 
+const SSH_AGENT_PROTOCOL: u16 = 2;
+
 mod agy_config;
 #[cfg(all(test, unix))]
 mod agy_smoke_tests;
@@ -43,6 +45,7 @@ mod mcode_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;
+mod native_config;
 mod omp_config;
 mod openclaw_config;
 mod opencode_config;
@@ -59,6 +62,7 @@ mod session_manager;
 mod settings;
 #[cfg(feature = "desktop")]
 mod ssh;
+mod ssh_usage;
 mod store;
 mod sync_utils;
 #[cfg(test)]

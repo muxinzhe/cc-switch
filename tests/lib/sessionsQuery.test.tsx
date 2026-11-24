@@ -180,7 +180,105 @@ describe("loadTranscript", () => {
   });
 });
 
+describe("remote session details", () => {
+  it("keeps paged content and images scoped to the selected host", async () => {
+    const ref: ContentRef = { kind: "sidecar", relPath: "tool-results/1" };
+    const picture: ImageRef = {
+      source: { kind: "local_file", path: "/project/plot.png" },
+      mediaType: "image/png",
+      size: 1,
+    };
+    const block = vi
+      .spyOn(sshApi, "getBlockContent")
+      .mockImplementation(async (hostId) => ({
+        text: hostId,
+        totalLen: hostId.length,
+        truncated: false,
+      }));
+    const image = vi
+      .spyOn(sshApi, "getImage")
+      .mockResolvedValue(new ArrayBuffer(1));
+    vi.stubGlobal(
+      "URL",
+      Object.assign(class extends URL {}, {
+        createObjectURL: vi
+          .fn()
+          .mockReturnValueOnce("blob:a")
+          .mockReturnValueOnce("blob:b"),
+        revokeObjectURL: vi.fn(),
+      }),
+    );
+    try {
+      const { result, rerender } = renderHook(
+        ({ machineId }) => ({
+          text: useBlockContent("claude", "/same/session", ref, { machineId })
+            .text,
+          url: useSessionImage("claude", "/same/session", picture, {
+            machineId,
+          }).url,
+        }),
+        { wrapper: wrapperWith(newClient()), initialProps: { machineId: "a" } },
+      );
+      await waitFor(() =>
+        expect(result.current).toEqual({ text: "a", url: "blob:a" }),
+      );
+      rerender({ machineId: "b" });
+      await waitFor(() =>
+        expect(result.current).toEqual({ text: "b", url: "blob:b" }),
+      );
+      expect(image).toHaveBeenCalledTimes(2);
+      expect(block).toHaveBeenCalledTimes(2);
+      expect(api.getImage).not.toHaveBeenCalled();
+      expect(api.getBlockContent).not.toHaveBeenCalled();
+    } finally {
+      clearSessionImageCache();
+      image.mockRestore();
+      block.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("useSessionTranscript", () => {
+  it("reads the selected source when two remote files have the same session ID", async () => {
+    const stream = vi
+      .spyOn(sshApi, "streamMessages")
+      .mockImplementation(async (_host, session, send) => {
+        send({
+          type: "messages",
+          start: 0,
+          messages: [message(session.sourcePath!)],
+        });
+        send({ type: "done", payloadBytes: 1 });
+      });
+    try {
+      const { result, rerender } = renderHook(
+        ({ sourcePath }) => {
+          const session = {
+            machineId: "host",
+            providerId: "codex",
+            sessionId: "id",
+            sourcePath,
+          };
+          return useSessionTranscript("codex", sourcePath, session);
+        },
+        {
+          wrapper: wrapperWith(newClient()),
+          initialProps: { sourcePath: "/project/one" },
+        },
+      );
+      await waitFor(() =>
+        expect(result.current.messages[0]?.content).toBe("/project/one"),
+      );
+      rerender({ sourcePath: "/project/two" });
+      await waitFor(() =>
+        expect(result.current.messages[0]?.content).toBe("/project/two"),
+      );
+    } finally {
+      stream.mockRestore();
+    }
+  });
+
   it("opens a remote transcript before completion and retains messages if the transfer fails", async () => {
     let push: (chunk: TranscriptChunk) => void = () => {};
     let fail: (error: Error) => void = () => {};
@@ -195,10 +293,11 @@ describe("useSessionTranscript", () => {
       const session = {
         providerId: "codex",
         sessionId: "remote-session",
+        sourcePath: "/sessions/remote.jsonl",
         machineId: "host",
       };
       const { result } = renderHook(
-        () => useSessionTranscript("codex", undefined, session),
+        () => useSessionTranscript("codex", session.sourcePath, session),
         { wrapper: wrapperWith(newClient()) },
       );
       await waitFor(() => expect(stream).toHaveBeenCalled());

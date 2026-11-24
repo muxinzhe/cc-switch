@@ -1,0 +1,26 @@
+{
+  "version": "4.0.38",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持通过 SSH 连接 Apple Silicon Mac",
+      "zh-TW": "支援透過 SSH 連線至 Apple Silicon Mac",
+      "en": "Connect to Apple Silicon Macs over SSH",
+      "ja": "SSH で Apple Silicon Mac に接続可能に"
+    },
+    {
+      "type": "improve",
+      "zh": "SSH 主机使用一个 agent 管理会话、用量和供应商配置",
+      "zh-TW": "SSH 主機使用一個 agent 管理工作階段、用量和供應商設定",
+      "en": "Use a single SSH agent to browse sessions, check usage and manage provider settings",
+      "ja": "単一の SSH エージェントでセッション、使用量、プロバイダー設定を管理"
+    },
+    {
+      "type": "fix",
+      "zh": "SSH 首次导入 Codex 官方登录时保留当前配置，避免重复条目",
+      "zh-TW": "SSH 首次匯入 Codex 官方登入時保留目前設定，避免重複項目",
+      "en": "Keep existing Codex settings and login in one OpenAI Official entry on first SSH import",
+      "ja": "SSH 初回取り込み時に Codex の公式ログインと設定を 1 件にまとめて保持"
+    }
+  ]
+}

@@ -59,8 +59,39 @@ jobs:
       - name: Validate all summaries
         run: pnpm vitest run tests/config/whatsNewEntries.test.ts
 
-  release:
+  ssh-agents:
     needs: whats-new-check
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            smoke_target: x86_64
+          - os: macos-15
+            smoke_target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build bundled Linux agents
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+          python3 -m pip install --target "$RUNNER_TEMP/agent-tools" ziglang==0.13.0
+          PATH="$RUNNER_TEMP/agent-tools/ziglang:$PATH" scripts/build-ssh-agent.sh
+      - name: Build bundled Apple Silicon agent
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin
+          scripts/build-ssh-agent.sh darwin-arm64
+      - name: Exercise the packaged agent on a fresh home
+        run: python3 src-tauri/tests/ssh_agent_smoke.py src-tauri/target/ssh-agent-assets/cc-switch-ssh-agent-${{ matrix.smoke_target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ssh-agents-${{ runner.os }}
+          path: src-tauri/target/ssh-agent-assets/cc-switch-ssh-agent-*
+          if-no-files-found: error
+
+  release:
+    needs: ssh-agents
     runs-on: ${{ matrix.os }}
     environment: release
     strategy:
@@ -77,6 +108,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Include bundled SSH agents
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ssh-agents-*
+          merge-multiple: true
+          path: src-tauri/target/ssh-agent-assets
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -355,7 +393,7 @@ jobs:
   # 编译不需要任何 secret；挂 release environment 只是为了和其它平台在开头一起批准一次。
   macos-binary:
     name: Build macOS binary (${{ matrix.target }})
-    needs: whats-new-check
+    needs: ssh-agents
     runs-on: macos-15
     environment: release
     strategy:
@@ -365,6 +403,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Include bundled SSH agents
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ssh-agents-*
+          merge-multiple: true
+          path: src-tauri/target/ssh-agent-assets
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

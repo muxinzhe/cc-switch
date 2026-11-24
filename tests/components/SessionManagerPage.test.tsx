@@ -333,7 +333,7 @@ describe("SessionManagerPage", () => {
       "host-a",
       expect.objectContaining({
         sessionId: "codex-session-1",
-        sourcePath: undefined,
+        sourcePath: "/mock/codex/session-1.jsonl",
       }),
       expect.any(Function),
     );

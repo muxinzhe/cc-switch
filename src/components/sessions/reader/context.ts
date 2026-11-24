@@ -8,7 +8,7 @@ import { AGENT_READER_STYLES, type AgentReaderStyle } from "./agentStyles";
 export interface ReaderContextValue {
   providerId?: string;
   sourcePath?: string;
-  isRemote?: boolean;
+  machineId?: string;
   /** 会话项目目录：路径显示为相对路径 */
   projectDir?: string;
   style: AgentReaderStyle;

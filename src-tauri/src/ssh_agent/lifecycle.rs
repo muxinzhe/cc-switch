@@ -1,14 +1,12 @@
 use std::{
-    ffi::OsStr,
     fs::{self, File, OpenOptions},
     io,
-    mem::{size_of, MaybeUninit},
     os::{
         fd::AsRawFd,
         unix::{
-            ffi::OsStrExt,
             fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
             net::UnixStream,
+            process::CommandExt,
         },
     },
     path::Path,
@@ -60,76 +58,42 @@ pub(super) fn connect(directory: &Path) -> Result<Option<UnixStream>> {
 
 fn is_current(socket: &mut UnixStream, build: &str) -> Result<bool> {
     let request = serde_json::json!({"protocol": PROTOCOL, "command": "hello"});
-    let reply: Value = serde_json::from_slice(&exchange(
+    let mut reply = Vec::new();
+    exchange(
         socket,
         &serde_json::to_vec(&request)?,
         HANDSHAKE_TIMEOUT,
-    )?)?;
+        &mut reply,
+    )?;
+    let reply: Value = serde_json::from_slice(&reply)?;
     Ok(reply["data"]["protocol"] == PROTOCOL
         && reply["data"]["version"] == env!("CARGO_PKG_VERSION")
         && reply["data"]["build"] == build)
 }
 
-fn retire_listener(socket: &UnixStream, directory: &Path) -> Result<()> {
-    let mut peer = MaybeUninit::<libc::ucred>::uninit();
-    let mut length = size_of::<libc::ucred>() as libc::socklen_t;
-    let result = unsafe {
-        libc::getsockopt(
-            socket.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            peer.as_mut_ptr().cast(),
-            &mut length,
-        )
-    };
-    if result != 0 {
-        return Err(io::Error::last_os_error()).context("Identifying the old SSH backend");
+pub(super) fn check_upgrade_lock(directory: &Path) -> Result<()> {
+    let probe = open_lock(directory, "upgrade.lock")?;
+    // Only --ensure owns this lock exclusively. Ordinary calls hold shared
+    // locks, so requesting retirement through the regular RPC cannot stop it.
+    if unsafe { libc::flock(probe.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        anyhow::bail!("Retirement requires an agent upgrade");
     }
+    let error = io::Error::last_os_error();
     ensure!(
-        length as usize == size_of::<libc::ucred>(),
-        "Invalid SSH backend peer credentials"
+        error.kind() == io::ErrorKind::WouldBlock,
+        "Checking upgrade lock: {error}"
     );
-    let peer = unsafe { peer.assume_init() };
-    ensure!(
-        peer.pid > 1 && peer.uid == unsafe { libc::geteuid() },
-        "Unexpected SSH backend owner"
-    );
+    Ok(())
+}
 
-    // Older agents have no shutdown RPC. Check the kernel-reported peer is
-    // the managed listener for this exact service before signaling it.
-    let command = match fs::read(format!("/proc/{}/cmdline", peer.pid)) {
-        Ok(command) => command,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if command.is_empty() {
-        return Ok(());
-    }
-    let args: Vec<_> = command
-        .strip_suffix(&[0])
-        .context("Invalid SSH backend command line")?
-        .split(|&byte| byte == 0)
-        .collect();
-    let executable = args.first().map(|arg| Path::new(OsStr::from_bytes(arg)));
-    let managed = executable.is_some_and(|exe| {
-        exe.parent() == directory.parent()
-            && exe.file_name().and_then(OsStr::to_str).is_some_and(|name| {
-                name.strip_prefix("provider-agent-").is_some_and(|digest| {
-                    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-                })
-            })
-    });
+fn verify_build(executable: &Path, build: &str) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let mut sha = Sha256::new();
+    io::copy(&mut File::open(executable)?, &mut sha)?;
     ensure!(
-        matches!(args.as_slice(), [_, b"--serve", service] if *service == directory.as_os_str().as_bytes())
-            && managed,
-        "The SSH socket is owned by an unexpected process"
+        format!("{:x}", sha.finalize()) == build,
+        "SSH agent build changed during installation"
     );
-    if unsafe { libc::kill(peer.pid, libc::SIGTERM) } != 0 {
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
-            return Err(error).context("Stopping the old SSH backend");
-        }
-    }
     Ok(())
 }
 
@@ -139,11 +103,43 @@ pub(super) fn ensure_running(directory: &Path, build: &str) -> Result<()> {
     if unsafe { libc::flock(upgrade.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(io::Error::last_os_error()).context("Locking the SSH backend upgrade");
     }
+    #[cfg(target_os = "linux")]
+    let executable = Path::new("/proc/self/exe");
+    // Darwin has no procfs executable handle. Pin the installed inode so an
+    // atomic replacement during startup cannot change what we verify and run.
+    #[cfg(target_os = "macos")]
+    let staging = tempfile::Builder::new()
+        .prefix(".launch-")
+        .tempdir_in(directory)?;
+    #[cfg(target_os = "macos")]
+    let executable = {
+        let path = staging.path().join("agent");
+        fs::hard_link(directory.join("agent"), &path)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o022 == 0,
+            "Expected an SSH agent executable owned by the SSH user"
+        );
+        path
+    };
+    verify_build(executable.as_ref(), build)?;
     if let Some(mut socket) = connect(directory)? {
         if is_current(&mut socket, build)? {
             return Ok(());
         }
-        retire_listener(&socket, directory)?;
+        drop(socket);
+        let mut socket = connect(directory)?.context("SSH agent stopped during upgrade")?;
+        let request = serde_json::json!({"protocol": PROTOCOL, "command": "retire"});
+        let mut response = Vec::new();
+        exchange(
+            &mut socket,
+            &serde_json::to_vec(&request)?,
+            HANDSHAKE_TIMEOUT,
+            &mut response,
+        )?;
+        ensure!(response == b"true", "SSH agent declined retirement");
     }
 
     let listener = open_lock(directory, "rpc.lock")?;
@@ -171,8 +167,19 @@ pub(super) fn ensure_running(directory: &Path, build: &str) -> Result<()> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(directory.join("startup.log"))?;
-    let mut child = Command::new("nohup")
-        .arg(std::env::current_exe()?)
+    // Start the verified inode in a new session so disconnecting SSH leaves the
+    // service running. Keep argv[0] stable for identifying the managed listener.
+    let mut command = Command::new(executable);
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .arg0(directory.join("agent"))
         .arg("--serve")
         .arg(directory)
         .env("CC_SWITCH_AGENT_BUILD", build)

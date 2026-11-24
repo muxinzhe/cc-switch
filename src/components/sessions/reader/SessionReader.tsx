@@ -491,7 +491,7 @@ export function SessionReader({
     () => ({
       providerId: session.providerId,
       sourcePath: session.sourcePath ?? undefined,
-      isRemote: Boolean(session.machineId),
+      machineId: session.machineId,
       projectDir: session.projectDir ?? undefined,
       style,
       appName,

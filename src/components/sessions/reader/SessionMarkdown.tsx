@@ -16,7 +16,6 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { highlightText } from "../utils";
-import { useReaderContext } from "./context";
 import { fileUrlToPath, PathChip, shortenPath } from "./PathChip";
 import {
   SESSION_INLINE_CODE_CLASS,
@@ -654,8 +653,7 @@ const MarkdownPathChip = (props: {
   searchQuery?: string;
 }) => {
   const { revealPath } = useContext(MarkdownActionsContext);
-  const { isRemote } = useReaderContext();
-  return <PathChip {...props} onReveal={revealPath} canReveal={!isRemote} />;
+  return <PathChip {...props} onReveal={revealPath} />;
 };
 
 /** 本地图片：调用方提供渲染器（阅读页用 SessionImage）时显示图片，否则退回路径 chip */

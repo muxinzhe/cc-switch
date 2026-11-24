@@ -1,14 +1,14 @@
 use serde_json::{json, Value};
 
-use super::{Request, PROTOCOL};
+use super::Request;
 use crate::{commands, AppHandle};
 
 macro_rules! dispatch {
     ($app:expr, $request:expr, $( $command:ident => $handler:ident ),+ $(,)?) => {
         match $request.command.as_str() {
-            "hello" => Ok(json!({"protocol": PROTOCOL, "version": env!("CARGO_PKG_VERSION"),
-                "build": std::env::var("CC_SWITCH_AGENT_BUILD").ok()})),
             "update_tray_menu" => Ok(json!(true)),
+            "native_config" => crate::native_config::handle($request.args)
+                .map_err(|error| json!(error.to_string())),
             "get_settings" => serde_json::to_value(crate::settings::get_settings_for_frontend())
                 .map_err(|error| json!(error.to_string())),
             $( stringify!($command) => commands::$handler($app, $request.args).await, )+

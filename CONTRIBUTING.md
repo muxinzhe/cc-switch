@@ -71,6 +71,13 @@ cargo test some_test_name     # Run tests matching a name
 
 ### Local Build
 
+Desktop packages embed SSH agents for Linux x86_64, Linux ARM64, and Apple Silicon macOS. To build all three on macOS, install the Xcode Command Line Tools, put Zig 0.13 on your PATH, and run the commands below. On Linux, the script builds the two Linux agents. For a desktop build on any platform, you can also point `CC_SWITCH_SSH_AGENT_ASSETS` at a directory containing all three binaries from the same release workflow.
+
+```bash
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin
+scripts/build-ssh-agent.sh
+```
+
 As its final step, `pnpm build` signs the auto-update bundles, which requires the release private key `TAURI_SIGNING_PRIVATE_KEY`. If you don't have the key locally, you can turn off updater bundle generation:
 
 ```bash
@@ -327,6 +334,13 @@ cargo test some_test_name     # 按名称运行部分测试
 > 刚 clone 下来、还没构建过前端时，请先在仓库根目录执行 `mkdir -p dist`（或 `pnpm build:renderer`）。否则 `src-tauri` 下的 cargo 命令会因为找不到前端产物目录而编译失败。
 
 ### 本地打包
+
+桌面安装包内置 Linux x86_64、Linux ARM64 和 Apple Silicon macOS 三种 SSH agent。在 macOS 上安装 Xcode 命令行工具，将 Zig 0.13 加入 PATH，再执行以下命令即可构建全部三个文件。在 Linux 上运行脚本会构建两种 Linux agent。任意平台打包桌面端时，也可以用 `CC_SWITCH_SSH_AGENT_ASSETS` 指向包含同一次发布构建生成的三个文件的目录。
+
+```bash
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin
+scripts/build-ssh-agent.sh
+```
 
 `pnpm build` 最后会为自动更新包签名，这一步需要发布用的私钥 `TAURI_SIGNING_PRIVATE_KEY`。本地没有私钥时，可以关闭更新包生成：
 

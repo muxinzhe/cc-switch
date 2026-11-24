@@ -22,7 +22,7 @@ use providers::{
     opencode, pi, workbuddy,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub provider_id: String,

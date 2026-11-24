@@ -44,6 +44,10 @@ pub fn get_openclaw_dir() -> PathBuf {
 ///
 /// 返回 `~/.openclaw/openclaw.json`
 pub fn get_openclaw_config_path() -> PathBuf {
+    #[cfg(not(feature = "desktop"))]
+    if let Some(path) = std::env::var_os("OPENCLAW_CONFIG_PATH").filter(|path| !path.is_empty()) {
+        return crate::settings::resolve_override_path(&path.to_string_lossy());
+    }
     get_openclaw_dir().join("openclaw.json")
 }
 

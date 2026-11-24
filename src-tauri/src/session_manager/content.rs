@@ -181,7 +181,7 @@ fn validate_sqlite_source(
 // ── ContentRef ──────────────────────────────────────────────────────
 
 /// 分页后的全文（§5.1 `BlockContent`）。`offset` / `limit` / `total_len` 均按字符计。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockContent {
     pub text: String,

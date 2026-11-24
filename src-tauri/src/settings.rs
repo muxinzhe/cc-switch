@@ -827,13 +827,8 @@ impl AppSettings {
         self.quota_display.as_deref() == Some("used")
     }
 
+    #[cfg(feature = "desktop")]
     fn settings_path() -> Option<PathBuf> {
-        // The SSH backend keeps its own settings with its managed database.
-        #[cfg(not(feature = "desktop"))]
-        return Some(crate::config::get_app_config_dir().join("settings.json"));
-
-        // settings.json 保留用于旧版本迁移和无数据库场景
-        #[cfg(feature = "desktop")]
         Some(
             crate::config::get_home_dir()
                 .join(".cc-switch")
@@ -890,6 +885,7 @@ impl AppSettings {
         }
     }
 
+    #[cfg(feature = "desktop")]
     fn load_from_file() -> Self {
         let Some(path) = Self::settings_path() else {
             return Self::default();
@@ -1040,6 +1036,7 @@ fn backup_settings_file(path: &Path) -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
+#[cfg(feature = "desktop")]
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let Some(path) = AppSettings::settings_path() else {
         return Err(AppError::Config("无法获取用户主目录".to_string()));
@@ -1083,7 +1080,13 @@ fn write_settings_to_path(
 static SETTINGS_STORE: OnceLock<RwLock<AppSettings>> = OnceLock::new();
 
 fn settings_store() -> &'static RwLock<AppSettings> {
-    SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
+    SETTINGS_STORE.get_or_init(|| {
+        #[cfg(feature = "desktop")]
+        let initial = AppSettings::load_from_file();
+        #[cfg(not(feature = "desktop"))]
+        let initial = AppSettings::default();
+        RwLock::new(initial)
+    })
 }
 
 // Writers hold the write lock while writing settings.json, build a new value
@@ -1148,16 +1151,12 @@ pub fn get_settings_for_frontend() -> AppSettings {
     settings
 }
 
-pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+pub fn update_settings(new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.codex_quota_protection.validate()?;
-    new_settings.normalize_paths();
-    // 写文件也在写锁内，并发保存时文件和内存的先后顺序一致。
-    let mut guard = write_settings();
-    save_settings_file(&new_settings)?;
-    *guard = new_settings;
-    Ok(())
+    mutate_settings(move |settings| *settings = new_settings)
 }
 
+#[cfg(feature = "desktop")]
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
@@ -1170,6 +1169,63 @@ where
     *guard = next;
     Ok(())
 }
+
+#[cfg(not(feature = "desktop"))]
+mod agent_store {
+    use super::*;
+    use crate::Database;
+    use std::sync::{Arc, Mutex};
+
+    const KEY: &str = "ssh_agent_device_settings";
+    static DATABASE: OnceLock<Arc<Database>> = OnceLock::new();
+    static WRITES: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn initialize_agent_settings(db: Arc<Database>) -> Result<(), AppError> {
+        DATABASE
+            .set(db)
+            .map_err(|_| AppError::Config("SSH agent settings already initialized".into()))?;
+        reload()
+    }
+
+    fn database() -> Result<&'static Database, AppError> {
+        DATABASE
+            .get()
+            .map(Arc::as_ref)
+            .ok_or_else(|| AppError::Config("SSH agent settings are unavailable".into()))
+    }
+
+    pub(super) fn reload() -> Result<(), AppError> {
+        let _writer = WRITES.lock().unwrap_or_else(|error| error.into_inner());
+        let mut settings: AppSettings = match database()?.get_setting(KEY)? {
+            Some(value) => serde_json::from_str(&value)
+                .map_err(|err| AppError::Config(format!("Invalid SSH agent settings: {err}")))?,
+            None => AppSettings::default(),
+        };
+        settings.normalize_paths();
+        settings.apply_load_migrations();
+        *write_settings() = settings;
+        Ok(())
+    }
+
+    pub(super) fn mutate_settings(f: impl FnOnce(&mut AppSettings)) -> Result<(), AppError> {
+        let _writer = WRITES.lock().unwrap_or_else(|error| error.into_inner());
+        let mut next = get_settings();
+        f(&mut next);
+        next.normalize_paths();
+        let json =
+            serde_json::to_string(&next).map_err(|source| AppError::JsonSerialize { source })?;
+        // Services can read the cached settings while holding their DB transaction.
+        // Publish under the settings lock only after the SQLite write has completed.
+        database()?.set_setting(KEY, &json)?;
+        *write_settings() = next;
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "desktop"))]
+pub(crate) use agent_store::initialize_agent_settings;
+#[cfg(not(feature = "desktop"))]
+use agent_store::mutate_settings;
 
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
     get_settings()
@@ -1307,6 +1363,12 @@ pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
 
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
+#[cfg(not(feature = "desktop"))]
+pub fn reload_settings() -> Result<(), AppError> {
+    agent_store::reload()
+}
+
+#[cfg(feature = "desktop")]
 pub fn reload_settings() -> Result<(), AppError> {
     // 在写锁内读文件，避免读到旧文件后覆盖并发写入的新值。
     let mut guard = write_settings();
@@ -1584,6 +1646,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppType;
 
+    #[cfg(feature = "desktop")]
     #[test]
     #[serial_test::serial]
     fn settings_readers_recover_after_poison_without_losing_local_values() {

@@ -223,8 +223,6 @@ describe("SSH hosts in the main window", () => {
       switch (command) {
         case "ssh_hosts":
           return hosts;
-        case "ssh_providers":
-          return [];
         case "ssh_read_config_file":
           return {
             path,
@@ -319,7 +317,7 @@ describe("SSH hosts in the main window", () => {
         return host;
       }
       if (command === "ssh_connect")
-        return { cliVersion: "5.11.4", arch: "x86_64" };
+        return { agentVersion: "test", arch: "x86_64" };
       throw new Error(command);
     });
     const user = userEvent.setup();
